@@ -1,10 +1,65 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="uk" xmlns:th="http://www.thymeleaf.org">
 <head>
     <meta charset="UTF-8">
-    <title>Title</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CV Transit — Транспорт Чернівців</title>
+
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- SockJS + STOMP -->
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+
+    <link rel="stylesheet" th:href="@{/css/style.css}"/>
 </head>
 <body>
 
+<div id="app">
+
+    <!-- ── Sidebar ── -->
+    <aside id="sidebar">
+        <div id="sidebar-header">
+            <h1>🚌 CV Transit</h1>
+            <span id="connection-badge" class="badge badge--connecting">з'єднання...</span>
+        </div>
+
+        <div id="stats-bar">
+            <div class="stat">
+                <span class="stat__value" id="stat-vehicles">—</span>
+                <span class="stat__label">транспорт онлайн</span>
+            </div>
+            <div class="stat">
+                <span class="stat__value" id="stat-routes">—</span>
+                <span class="stat__label">маршрутів</span>
+            </div>
+        </div>
+
+        <div id="route-filter">
+            <input type="text" id="route-search" placeholder="Пошук маршруту..."/>
+            <div id="route-list">
+                <!-- заповнюється динамічно -->
+            </div>
+        </div>
+
+        <div id="sidebar-footer">
+            <span id="last-update">Очікування оновлення...</span>
+        </div>
+    </aside>
+
+    <!-- ── Map ── -->
+    <main id="map"></main>
+
+    <!-- ── Vehicle popup (detail panel) ── -->
+    <div id="vehicle-panel" class="vehicle-panel vehicle-panel--hidden">
+        <button id="vehicle-panel-close">✕</button>
+        <div id="vehicle-panel-content"></div>
+    </div>
+
+</div>
+
+<script th:src="@{/js/map.js}"></script>
 </body>
 </html>

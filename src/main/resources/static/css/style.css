@@ -1,0 +1,203 @@
+/* ── Reset & Base ─────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+    --sidebar-width: 280px;
+    --color-primary: #1a73e8;
+    --color-success: #34a853;
+    --color-warning: #fbbc04;
+    --color-danger:  #ea4335;
+    --color-bg:      #f8f9fa;
+    --color-surface: #ffffff;
+    --color-border:  #e0e0e0;
+    --color-text:    #202124;
+    --color-muted:   #5f6368;
+    --radius:        8px;
+    --shadow:        0 2px 8px rgba(0,0,0,.12);
+}
+
+html, body { height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; }
+
+/* ── Layout ───────────────────────────────────────────────────────────────── */
+#app {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+}
+
+#map {
+    flex: 1;
+    height: 100%;
+    z-index: 0;
+}
+
+/* ── Sidebar ──────────────────────────────────────────────────────────────── */
+#sidebar {
+    width: var(--sidebar-width);
+    height: 100%;
+    background: var(--color-surface);
+    border-right: 1px solid var(--color-border);
+    display: flex;
+    flex-direction: column;
+    z-index: 100;
+    box-shadow: var(--shadow);
+}
+
+#sidebar-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--color-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--color-primary);
+    color: white;
+}
+
+#sidebar-header h1 {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+/* ── Badge (статус з'єднання) ─────────────────────────────────────────────── */
+.badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 12px;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+}
+.badge--connecting { background: rgba(255,255,255,.25); color: white; }
+.badge--connected  { background: var(--color-success);  color: white; }
+.badge--error      { background: var(--color-danger);   color: white; }
+
+/* ── Stats ────────────────────────────────────────────────────────────────── */
+#stats-bar {
+    display: flex;
+    padding: 12px 16px;
+    gap: 16px;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg);
+}
+
+.stat { display: flex; flex-direction: column; align-items: center; flex: 1; }
+.stat__value { font-size: 24px; font-weight: 700; color: var(--color-primary); }
+.stat__label { font-size: 11px; color: var(--color-muted); text-align: center; }
+
+/* ── Route filter ─────────────────────────────────────────────────────────── */
+#route-filter {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    gap: 8px;
+}
+
+#route-search {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    font-size: 13px;
+    outline: none;
+    transition: border-color .2s;
+}
+#route-search:focus { border-color: var(--color-primary); }
+
+#route-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+/* ── Route item ───────────────────────────────────────────────────────────── */
+.route-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background .15s;
+    user-select: none;
+}
+.route-item:hover  { background: var(--color-bg); }
+.route-item--active { background: #e8f0fe; }
+
+.route-badge {
+    min-width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 13px;
+    color: white;
+    background: var(--color-primary);
+    flex-shrink: 0;
+}
+
+.route-info { flex: 1; min-width: 0; }
+.route-name { font-size: 13px; font-weight: 600; color: var(--color-text); }
+.route-count { font-size: 11px; color: var(--color-muted); }
+
+/* ── Sidebar footer ───────────────────────────────────────────────────────── */
+#sidebar-footer {
+    padding: 10px 16px;
+    border-top: 1px solid var(--color-border);
+    font-size: 11px;
+    color: var(--color-muted);
+    text-align: center;
+}
+
+/* ── Vehicle detail panel ─────────────────────────────────────────────────── */
+.vehicle-panel {
+    position: absolute;
+    bottom: 24px;
+    right: 24px;
+    width: 260px;
+    background: var(--color-surface);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    z-index: 500;
+    padding: 16px;
+    transition: opacity .2s, transform .2s;
+}
+.vehicle-panel--hidden {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(8px);
+}
+
+#vehicle-panel-close {
+    position: absolute;
+    top: 8px; right: 8px;
+    background: none; border: none;
+    cursor: pointer; font-size: 14px;
+    color: var(--color-muted);
+}
+
+.vehicle-panel h3 { font-size: 16px; margin-bottom: 8px; }
+.vehicle-detail   { font-size: 13px; color: var(--color-muted); line-height: 1.8; }
+.vehicle-detail strong { color: var(--color-text); }
+
+/* ── Leaflet marker override ──────────────────────────────────────────────── */
+.vehicle-marker {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    border: 2px solid white;
+    box-shadow: 0 2px 6px rgba(0,0,0,.3);
+    font-size: 14px;
+    transition: transform .3s ease;
+}
+
+/* ── Scrollbar ────────────────────────────────────────────────────────────── */
+#route-list::-webkit-scrollbar { width: 4px; }
+#route-list::-webkit-scrollbar-track { background: transparent; }
+#route-list::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 2px; }

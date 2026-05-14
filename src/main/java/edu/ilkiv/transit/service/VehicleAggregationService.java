@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -26,20 +27,32 @@ public class VehicleAggregationService {
     private final RouteRepository routeRepository;
     private final SourceMappingRepository sourceMappingRepository;
     private final GpsHistoryRepository gpsHistoryRepository;
+    private final VehicleBroadcastService broadcastService;
+    private final VehicleService vehicleService;
+
 
     @Transactional
     public void processPositions(List<VehiclePositionDto> positions) {
+        List<Vehicle> updated = new ArrayList<>();
+
         for (VehiclePositionDto dto : positions) {
             try {
-                processOne(dto);
+                Vehicle v = processOne(dto);
+                if (v != null) updated.add(v);
             } catch (Exception e) {
                 log.error("Failed to process vehicle {} from {}: {}",
                         dto.getExternalId(), dto.getSource(), e.getMessage());
             }
         }
+
+        // Push до всіх WebSocket клієнтів
+        if (!updated.isEmpty()) {
+            broadcastService.broadcast(updated);
+            vehicleService.evictCache(); // інвалідуємо кеш після оновлення
+        }
     }
 
-    private void processOne(VehiclePositionDto dto) {
+    private Vehicle processOne(VehiclePositionDto dto) {
         // 1. Знайти або створити канонічний маршрут
         Route route = resolveRoute(dto);
 
@@ -73,6 +86,9 @@ public class VehicleAggregationService {
                 .source(dto.getSource())
                 .build();
         gpsHistoryRepository.save(history);
+        vehicleRepository.save(vehicle);
+        gpsHistoryRepository.save(history);
+        return vehicle;
     }
 
     /**
