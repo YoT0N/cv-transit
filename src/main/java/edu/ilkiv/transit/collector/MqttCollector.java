@@ -14,6 +14,7 @@ import org.eclipse.paho.client.mqttv3.*;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.util.List;
 import java.util.UUID;
@@ -34,6 +35,7 @@ import java.util.UUID;
 @Slf4j
 @Component
 @RequiredArgsConstructor
+@ConditionalOnProperty(name = "nimbus.mqtt.enabled", havingValue = "true", matchIfMissing = false)
 public class MqttCollector implements MqttCallback {
 
     // URI WebSocket брокера (wss:// = TLS, ws:// = plain)
@@ -75,6 +77,8 @@ public class MqttCollector implements MqttCallback {
 
             log.info("MqttCollector: connecting to {}...", brokerUri);
             mqttClient.connect(options);
+            log.info("MqttCollector: connected successfully");
+
 
             String topic = "nimbus/locator/" + nimbusToken + "/#";
             mqttClient.subscribe(topic, qos);

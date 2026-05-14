@@ -2,6 +2,8 @@ package edu.ilkiv.transit.model;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcType;
+import org.hibernate.dialect.PostgreSQLEnumJdbcType;
 
 @Entity
 @Table(
@@ -31,6 +33,7 @@ public class SourceMapping {
     private Long canonicalId;
 
     @Enumerated(EnumType.STRING)
+    @JdbcType(PostgreSQLEnumJdbcType.class)   // ← додати це
     @Column(nullable = false)
     private DataSource source;
 

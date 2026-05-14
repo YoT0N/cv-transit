@@ -8,9 +8,11 @@ import edu.ilkiv.transit.model.TransportType;
 import edu.ilkiv.transit.service.VehicleAggregationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.util.List;
 
@@ -21,6 +23,7 @@ import java.util.List;
 @Slf4j
 @Component
 @RequiredArgsConstructor
+@ConditionalOnProperty(name = "transportcv.collector.enabled", havingValue = "true", matchIfMissing = false)
 public class TransportCvCollector {
 
     private static final String URL = "https://transport.cv.ua/api/positions";
@@ -34,6 +37,8 @@ public class TransportCvCollector {
         try {
             TransportCvResponseDto response = webClient.post()
                     .uri(URL)
+                    .contentType(new MediaType(MediaType.APPLICATION_FORM_URLENCODED, java.nio.charset.StandardCharsets.UTF_8))
+                    .bodyValue("selectedRoutesStr=")  // порожній = всі маршрути
                     .retrieve()
                     .bodyToMono(TransportCvResponseDto.class)
                     .block();

@@ -86,8 +86,6 @@ public class VehicleAggregationService {
                 .source(dto.getSource())
                 .build();
         gpsHistoryRepository.save(history);
-        vehicleRepository.save(vehicle);
-        gpsHistoryRepository.save(history);
         return vehicle;
     }
 
