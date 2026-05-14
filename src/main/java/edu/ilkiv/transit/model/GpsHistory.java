@@ -2,6 +2,8 @@ package edu.ilkiv.transit.model;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcType;
+import org.hibernate.dialect.PostgreSQLEnumJdbcType;
 
 import java.time.OffsetDateTime;
 
@@ -31,6 +33,7 @@ public class GpsHistory {
     private Float speed;
 
     @Enumerated(EnumType.STRING)
+    @JdbcType(PostgreSQLEnumJdbcType.class)   // ← PostgreSQL enum cast
     @Column(nullable = false)
     private DataSource source;
 

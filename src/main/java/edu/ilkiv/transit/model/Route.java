@@ -2,6 +2,8 @@ package edu.ilkiv.transit.model;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcType;
+import org.hibernate.dialect.PostgreSQLEnumJdbcType;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -20,16 +22,15 @@ public class Route {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** Людська назва маршруту: "10", "19A", "3" */
     @Column(nullable = false, length = 16)
     private String name;
 
     @Enumerated(EnumType.STRING)
+    @JdbcType(PostgreSQLEnumJdbcType.class)   // ← каже Hibernate використати PostgreSQL enum cast
     @Column(nullable = false)
     @Builder.Default
     private TransportType type = TransportType.BUS;
 
-    /** Колір маркера на карті (hex або назва) */
     @Column(length = 16)
     private String color;
 

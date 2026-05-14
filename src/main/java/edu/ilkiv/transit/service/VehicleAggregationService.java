@@ -109,7 +109,9 @@ public class VehicleAggregationService {
         if (dto.getExternalRouteId() != null) {
             Optional<SourceMapping> mapping = sourceMappingRepository
                     .findByEntityTypeAndSourceAndSourceId(
-                            "route", dto.getSource(), dto.getExternalRouteId());
+                            "route",
+                            dto.getSource().name(),   // ← .name() бо нативний запит приймає String
+                            dto.getExternalRouteId());
 
             if (mapping.isPresent()) {
                 return routeRepository.findById(mapping.get().getCanonicalId())

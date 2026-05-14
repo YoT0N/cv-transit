@@ -2,6 +2,8 @@ package edu.ilkiv.transit.model;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcType;
+import org.hibernate.dialect.PostgreSQLEnumJdbcType;
 
 import java.time.OffsetDateTime;
 
@@ -21,20 +23,18 @@ public class Vehicle {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** ID транспорту у зовнішньому джерелі (imei, vehicleId тощо) */
     @Column(name = "external_id", nullable = false, length = 64)
     private String externalId;
 
     @Enumerated(EnumType.STRING)
+    @JdbcType(PostgreSQLEnumJdbcType.class)   // ← каже Hibernate використати PostgreSQL enum cast
     @Column(nullable = false)
     private DataSource source;
 
-    /** Маршрут, яким зараз їде транспорт */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "route_id")
     private Route route;
 
-    /** Бортовий номер ("4811", "3459") */
     @Column(name = "bus_number", length = 16)
     private String busNumber;
 
@@ -46,7 +46,6 @@ public class Vehicle {
 
     private Float speed;
 
-    /** Напрямок руху в градусах (0–360) */
     private Float bearing;
 
     @Column(nullable = false)
