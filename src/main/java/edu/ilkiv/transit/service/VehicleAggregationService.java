@@ -15,8 +15,6 @@ import java.util.Optional;
 
 /**
  * Центральний сервіс агрегації.
- * Отримує VehiclePositionDto з будь-якого колектора,
- * зводить до канонічних маршрутів і зберігає в БД.
  */
 @Slf4j
 @Service
@@ -30,7 +28,6 @@ public class VehicleAggregationService {
     private final VehicleBroadcastService broadcastService;
     private final VehicleService vehicleService;
 
-
     @Transactional
     public void processPositions(List<VehiclePositionDto> positions) {
         List<Vehicle> updated = new ArrayList<>();
@@ -38,25 +35,30 @@ public class VehicleAggregationService {
         for (VehiclePositionDto dto : positions) {
             try {
                 Vehicle v = processOne(dto);
-                if (v != null) updated.add(v);
+                if (v != null) {
+                    updated.add(v);
+                    log.debug("Processed vehicle externalId={} source={} route='{}'",
+                            dto.getExternalId(), dto.getSource(),
+                            v.getRoute() != null ? v.getRoute().getName() : "null");
+                }
             } catch (Exception e) {
-                log.error("Failed to process vehicle {} from {}: {}",
-                        dto.getExternalId(), dto.getSource(), e.getMessage());
+                log.error("Failed to process vehicle externalId={} source={} routeName='{}': {}",
+                        dto.getExternalId(), dto.getSource(), dto.getRouteName(), e.getMessage(), e);
             }
         }
 
-        // Push до всіх WebSocket клієнтів
+        log.debug("processPositions: {}/{} vehicles saved successfully",
+                updated.size(), positions.size());
+
         if (!updated.isEmpty()) {
             broadcastService.broadcast(updated);
-            vehicleService.evictCache(); // інвалідуємо кеш після оновлення
+            vehicleService.evictCache();
         }
     }
 
     private Vehicle processOne(VehiclePositionDto dto) {
-        // 1. Знайти або створити канонічний маршрут
         Route route = resolveRoute(dto);
 
-        // 2. Знайти або створити vehicle
         Vehicle vehicle = vehicleRepository
                 .findByExternalIdAndSource(dto.getExternalId(), dto.getSource())
                 .orElseGet(() -> Vehicle.builder()
@@ -64,7 +66,6 @@ public class VehicleAggregationService {
                         .source(dto.getSource())
                         .build());
 
-        // 3. Оновити поточну позицію
         vehicle.setRoute(route);
         vehicle.setLat(dto.getLat());
         vehicle.setLng(dto.getLng());
@@ -77,7 +78,6 @@ public class VehicleAggregationService {
         }
         vehicleRepository.save(vehicle);
 
-        // 4. Зберегти точку в GPS-історію (асинхронно через save)
         GpsHistory history = GpsHistory.builder()
                 .vehicle(vehicle)
                 .lat(dto.getLat())
@@ -89,17 +89,10 @@ public class VehicleAggregationService {
         return vehicle;
     }
 
-    /**
-     * Знаходить канонічний Route для dto.
-     * Алгоритм:
-     *  1. Шукаємо в source_mappings чи вже знаємо цей (source, externalRouteId)
-     *  2. Якщо є — повертаємо відповідний Route
-     *  3. Якщо ні — шукаємо Route за назвою (routeName)
-     *  4. Якщо і його нема — створюємо новий Route
-     *  5. Зберігаємо маппінг
-     */
     private Route resolveRoute(VehiclePositionDto dto) {
         if (dto.getExternalRouteId() == null && dto.getRouteName() == null) {
+            log.debug("resolveRoute: no routeId/routeName for externalId={}, returning null",
+                    dto.getExternalId());
             return null;
         }
 
@@ -108,12 +101,14 @@ public class VehicleAggregationService {
             Optional<SourceMapping> mapping = sourceMappingRepository
                     .findByEntityTypeAndSourceAndSourceId(
                             "route",
-                            dto.getSource().name(),   // ← .name() бо нативний запит приймає String
+                            dto.getSource().name(),
                             dto.getExternalRouteId());
 
             if (mapping.isPresent()) {
-                return routeRepository.findById(mapping.get().getCanonicalId())
-                        .orElse(null);
+                Route found = routeRepository.findById(mapping.get().getCanonicalId()).orElse(null);
+                log.debug("resolveRoute: found via mapping externalRouteId={} → route='{}'",
+                        dto.getExternalRouteId(), found != null ? found.getName() : "null");
+                return found;
             }
         }
 
@@ -121,27 +116,41 @@ public class VehicleAggregationService {
         Route route = null;
         if (dto.getRouteName() != null) {
             route = routeRepository.findByName(dto.getRouteName()).orElse(null);
+            log.debug("resolveRoute: lookup by name='{}' → {}",
+                    dto.getRouteName(), route != null ? "found id=" + route.getId() : "not found");
         }
 
         // Крок 3: створюємо новий маршрут
         if (route == null) {
+            String name = dto.getRouteName() != null
+                    ? dto.getRouteName()
+                    : "id:" + dto.getExternalRouteId();
+
             route = routeRepository.save(Route.builder()
-                    .name(dto.getRouteName() != null ? dto.getRouteName() : "?")
+                    .name(name)
                     .type(dto.getType() != null ? dto.getType() : TransportType.BUS)
                     .color(dto.getColor())
                     .isActive(true)
                     .build());
-            log.info("Created new route: '{}'", route.getName());
+            log.info("resolveRoute: created new route '{}' (source={}, externalRouteId={})",
+                    route.getName(), dto.getSource(), dto.getExternalRouteId());
         }
 
-        // Крок 4: зберігаємо маппінг щоб наступного разу не шукати
+        // Крок 4: зберігаємо маппінг
         if (dto.getExternalRouteId() != null) {
-            sourceMappingRepository.save(SourceMapping.builder()
-                    .entityType("route")
-                    .canonicalId(route.getId())
-                    .source(dto.getSource())
-                    .sourceId(dto.getExternalRouteId())
-                    .build());
+            // Перевіряємо чи маппінг вже існує (щоб уникнути UniqueConstraint violation)
+            boolean exists = sourceMappingRepository
+                    .findByEntityTypeAndSourceAndSourceId(
+                            "route", dto.getSource().name(), dto.getExternalRouteId())
+                    .isPresent();
+            if (!exists) {
+                sourceMappingRepository.save(SourceMapping.builder()
+                        .entityType("route")
+                        .canonicalId(route.getId())
+                        .source(dto.getSource())
+                        .sourceId(dto.getExternalRouteId())
+                        .build());
+            }
         }
 
         return route;

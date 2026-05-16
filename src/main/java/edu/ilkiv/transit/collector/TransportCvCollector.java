@@ -20,15 +20,14 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Збирає позиції транспорту з transport.cv.ua кожні 30 секунд.
  *
- * Підпис: SHA-1(SALT + reqDate + SALT + userAgent + SALT)
- * ВАЖЛИВО: User-Agent у заголовку запиту МУСИТЬ збігатися з тим,
- * що використовувався при обчисленні підпису.
- * Reactor Netty за замовчуванням додає свій User-Agent — тому
- * ми явно перезаписуємо його через ExchangeFilterFunction.
+ * rtsId → routeName маппінг захардкоджений до тих пір поки не знайдемо
+ * офіційний API маршрутів transport.cv.ua.
+ * Додавати нові маршрути: просто додай рядок у ROUTE_NAMES.
  */
 @Slf4j
 @Component
@@ -38,11 +37,23 @@ public class TransportCvCollector {
 
     private static final String URL = "https://transport.cv.ua/api/positions";
 
+    private static final String REFERER     = "https://transport.cv.ua/";
+    private static final String ORIGIN      = "https://transport.cv.ua";
+    private static final String ACCEPT      = "application/json, text/plain, */*";
+    private static final String ACCEPT_LANG = "uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7";
+
+    /**
+     * rtsId (з поля rtsId у відповіді transport.cv.ua) → людська назва маршруту.
+     * TODO: замінити на динамічне завантаження коли знайдемо API маршрутів.
+     */
+    private static final Map<Long, String> ROUTE_NAMES = Map.of(
+            121L,  "3",
+            823L,  "21",
+            1922L, "26"
+    );
+
     private final WebClient webClient;
     private final VehicleAggregationService aggregationService;
-
-    // Тимчасова заміна методу collect() у TransportCvCollector
-// Додає onStatus щоб прочитати тіло 400 відповіді
 
     @Scheduled(fixedDelay = 30_000, initialDelay = 5_000)
     public void collect() {
@@ -54,47 +65,59 @@ public class TransportCvCollector {
             log.debug("TransportCvCollector -> Reqdate: [{}]", reqDate);
             log.debug("TransportCvCollector -> Sign:    [{}]", sign);
 
-            // Читаємо RAW відповідь — включно з тілом помилки
-            String rawBody = webClient
+            TransportCvResponseDto response = webClient
                     .mutate()
                     .filter(forceUserAgent(TransportCvSignature.USER_AGENT))
                     .build()
                     .post()
                     .uri(URL)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .header("Reqdate",              reqDate)
-                    .header("Sign",                 sign)
-                    .header(HttpHeaders.USER_AGENT, TransportCvSignature.USER_AGENT)
+                    .accept(MediaType.APPLICATION_JSON)
+                    .header("Reqdate",               reqDate)
+                    .header("Sign",                  sign)
+                    .header(HttpHeaders.USER_AGENT,  TransportCvSignature.USER_AGENT)
+                    .header(HttpHeaders.REFERER,     REFERER)
+                    .header(HttpHeaders.ORIGIN,      ORIGIN)
+                    .header(HttpHeaders.ACCEPT,      ACCEPT)
+                    .header("Accept-Language",       ACCEPT_LANG)
+                    .header("Sec-Fetch-Dest", "empty")
+                    .header("Sec-Fetch-Mode", "cors")
+                    .header("Sec-Fetch-Site", "same-origin")
                     .bodyValue("{\"routeIds\":[]}")
-                    .exchangeToMono(response -> {
-                        // Логуємо статус і ВСІ заголовки відповіді
-                        log.warn("TransportCvCollector response status: {}", response.statusCode());
-                        log.warn("TransportCvCollector response headers: {}", response.headers().asHttpHeaders());
-                        // Повертаємо тіло як рядок незалежно від статусу
-                        return response.bodyToMono(String.class);
+                    .exchangeToMono(resp -> {
+                        if (resp.statusCode().is2xxSuccessful()) {
+                            return resp.bodyToMono(TransportCvResponseDto.class);
+                        }
+                        return resp.bodyToMono(String.class)
+                                .flatMap(body -> {
+                                    log.warn("TransportCvCollector: {} — body: {}",
+                                            resp.statusCode(), body);
+                                    return Mono.empty();
+                                });
                     })
                     .block();
 
-            // Виводимо тіло відповіді — тут буде причина помилки
-            log.warn("TransportCvCollector response body: [{}]", rawBody);
+            if (response == null || response.getTransports() == null
+                    || response.getTransports().isEmpty()) {
+                log.warn("TransportCvCollector: empty or null response");
+                return;
+            }
+
+            List<VehiclePositionDto> positions = response.getTransports().stream()
+                    .filter(v -> v.getLat() != null && v.getLon() != null)
+                    .map(this::toPositionDto)
+                    .toList();
+
+            log.debug("TransportCvCollector: got {} vehicles", positions.size());
+            aggregationService.processPositions(positions);
 
         } catch (Exception e) {
-            log.warn("TransportCvCollector: exception — {}", e.getMessage(), e);
+            log.error("TransportCvCollector: exception — {}", e.getMessage(), e);
         }
     }
 
-    /**
-     * ExchangeFilterFunction що перезаписує User-Agent вже після того,
-     * як Reactor Netty міг встановити свій дефолтний ("ReactorNetty/x.x.x").
-     * Гарантує що реально надісланий заголовок збігається з тим що пішов у SHA-1.
-     */
     private static ExchangeFilterFunction forceUserAgent(String userAgent) {
         return ExchangeFilterFunction.ofRequestProcessor(request -> {
-            log.debug("TransportCvCollector actual headers: {}",
-                    request.headers().entrySet().stream()
-                            .map(e -> e.getKey() + "=" + e.getValue())
-                            .toList());
-
             ClientRequest modified = ClientRequest.from(request)
                     .headers(h -> h.set(HttpHeaders.USER_AGENT, userAgent))
                     .build();
@@ -103,10 +126,19 @@ public class TransportCvCollector {
     }
 
     private VehiclePositionDto toPositionDto(TransportCvVehicleDto dto) {
+        String routeName = ROUTE_NAMES.get(dto.getRtsId());
+
+        if (routeName == null) {
+            // Невідомий маршрут — логуємо щоб можна було додати у маппінг
+            log.info("TransportCvCollector: unknown rtsId={}, transportNumber={} — add to ROUTE_NAMES",
+                    dto.getRtsId(), dto.getTransportNumber());
+        }
+
         return VehiclePositionDto.builder()
                 .externalId(String.valueOf(dto.getId()))
                 .source(DataSource.transportcv)
                 .externalRouteId(String.valueOf(dto.getRtsId()))
+                .routeName(routeName)   // null якщо rtsId не в маппінгу
                 .type(TransportType.BUS)
                 .lat(dto.getLat())
                 .lng(dto.getLon())

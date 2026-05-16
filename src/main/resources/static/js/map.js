@@ -1,22 +1,27 @@
 /**
  * CV Transit — map.js
  * Leaflet карта + STOMP WebSocket клієнт.
+ * Підтримує мульти-вибір маршрутів у сайдбарі.
  */
 
 // ── Константи ─────────────────────────────────────────────────────────────────
-const CHERNIVTSI = [48.2921, 25.9358];
+const CHERNIVTSI   = [48.2921, 25.9358];
 const DEFAULT_ZOOM = 13;
-const WS_URL = '/ws';
-const TOPIC_ALL = '/topic/vehicles';
-const API_ROUTES = '/api/routes';
+const WS_URL       = '/ws';
+const TOPIC_ALL    = '/topic/vehicles';
+const API_ROUTES   = '/api/routes';
 const API_VEHICLES = '/api/vehicles';
+
+// Маркер вважається застарілим після 90 секунд без оновлення
+const STALE_MS = 90_000;
 
 // ── Стан ──────────────────────────────────────────────────────────────────────
 const state = {
-    markers: new Map(),      // vehicleId → Leaflet marker
-    routes: [],              // RouteResponseDto[]
-    activeRouteId: null,     // фільтр по маршруту (null = всі)
-    stompClient: null,
+    markers:          new Map(),   // vehicleId → Leaflet marker
+    lastSeen:         new Map(),   // vehicleId → timestamp (ms)
+    routes:           [],          // RouteResponseDto[]
+    selectedRouteIds: new Set(),   // порожній = "всі маршрути"
+    stompClient:      null,
 };
 
 // ── Ініціалізація карти ───────────────────────────────────────────────────────
@@ -34,6 +39,10 @@ async function loadRoutes() {
     try {
         const res = await fetch(API_ROUTES);
         state.routes = await res.json();
+
+        // Фільтруємо маршрути з назвою "?" — це артефакти старої БД
+        state.routes = state.routes.filter(r => r.name && r.name !== '?');
+
         renderRouteList(state.routes);
         document.getElementById('stat-routes').textContent = state.routes.length;
     } catch (err) {
@@ -45,9 +54,25 @@ function renderRouteList(routes) {
     const list = document.getElementById('route-list');
     list.innerHTML = '';
 
-    const allItem = createRouteItem(null, 'Всі', '', null);
+    // Кнопка "Всі маршрути"
+    const allItem = createRouteItem(null, 'Всі', null, null);
     allItem.classList.add('route-item--active');
     list.appendChild(allItem);
+
+    // Кнопка "Скинути вибір" — з'являється тільки коли щось вибрано
+    const clearBtn = document.createElement('div');
+    clearBtn.id = 'clear-selection';
+    clearBtn.className = 'route-item route-item--clear';
+    clearBtn.style.display = 'none';
+    clearBtn.innerHTML = `
+        <div class="route-badge" style="background: var(--color-muted); font-size:18px;">✕</div>
+        <div class="route-info">
+            <div class="route-name">Скинути вибір</div>
+            <div class="route-count" id="selected-count"></div>
+        </div>
+    `;
+    clearBtn.addEventListener('click', clearSelection);
+    list.appendChild(clearBtn);
 
     routes
         .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
@@ -70,24 +95,85 @@ function createRouteItem(id, name, count, color) {
     info.className = 'route-info';
     info.innerHTML = `
         <div class="route-name">${name === 'Всі' ? 'Всі маршрути' : 'Маршрут ' + name}</div>
-        <div class="route-count">${count !== null ? count + ' транспорт(и)' : ''}</div>
+        <div class="route-count">${count != null ? count + ' транспорт(и)' : ''}</div>
     `;
 
     item.appendChild(badge);
     item.appendChild(info);
-    item.addEventListener('click', () => selectRoute(id, item));
+
+    if (id === null) {
+        // "Всі маршрути" — скидає вибір
+        item.addEventListener('click', clearSelection);
+    } else {
+        item.addEventListener('click', () => toggleRoute(id, item));
+    }
+
     return item;
 }
 
-function selectRoute(routeId, element) {
-    document.querySelectorAll('.route-item').forEach(el => el.classList.remove('route-item--active'));
-    element.classList.add('route-item--active');
-    state.activeRouteId = routeId;
+// ── Логіка вибору маршрутів ───────────────────────────────────────────────────
 
+function toggleRoute(routeId, element) {
+    if (state.selectedRouteIds.has(routeId)) {
+        // Вже вибраний — знімаємо вибір
+        state.selectedRouteIds.delete(routeId);
+        element.classList.remove('route-item--active');
+    } else {
+        // Додаємо до вибору
+        state.selectedRouteIds.add(routeId);
+        element.classList.add('route-item--active');
+    }
+
+    // "Всі" стає активним тільки коли нічого не вибрано
+    const allItem = document.querySelector('[data-route-id=""]');
+    if (allItem) {
+        allItem.classList.toggle('route-item--active', state.selectedRouteIds.size === 0);
+    }
+
+    updateClearButton();
+    applyRouteFilter();
+}
+
+function clearSelection() {
+    state.selectedRouteIds.clear();
+
+    document.querySelectorAll('.route-item').forEach(el => {
+        el.classList.remove('route-item--active');
+    });
+    const allItem = document.querySelector('[data-route-id=""]');
+    if (allItem) allItem.classList.add('route-item--active');
+
+    updateClearButton();
+    applyRouteFilter();
+}
+
+function updateClearButton() {
+    const btn   = document.getElementById('clear-selection');
+    const count = document.getElementById('selected-count');
+    if (!btn) return;
+
+    if (state.selectedRouteIds.size > 0) {
+        btn.style.display = '';
+        count.textContent = `вибрано ${state.selectedRouteIds.size} маршрут(и)`;
+    } else {
+        btn.style.display = 'none';
+    }
+}
+
+function isVehicleVisible(vehicle) {
+    if (state.selectedRouteIds.size === 0) return true; // всі
+
+    // Шукаємо маршрут по назві серед вибраних
+    const selectedNames = new Set(
+        [...state.selectedRouteIds].map(id => getRouteNameById(id)).filter(Boolean)
+    );
+    return vehicle.routeName && selectedNames.has(vehicle.routeName);
+}
+
+function applyRouteFilter() {
     state.markers.forEach((marker) => {
-        const vehicle = marker.vehicleData;
-        const show = routeId === null || vehicle?.routeName === getRouteNameById(routeId);
-        if (show) marker.addTo(map);
+        const visible = isVehicleVisible(marker.vehicleData);
+        if (visible) marker.addTo(map);
         else map.removeLayer(marker);
     });
 }
@@ -101,7 +187,9 @@ function getRouteNameById(routeId) {
 document.getElementById('route-search').addEventListener('input', function () {
     const query = this.value.toLowerCase();
     document.querySelectorAll('.route-item').forEach(item => {
-        const name = item.querySelector('.route-name').textContent.toLowerCase();
+        const nameEl = item.querySelector('.route-name');
+        if (!nameEl) return;
+        const name = nameEl.textContent.toLowerCase();
         item.style.display = name.includes(query) ? '' : 'none';
     });
 });
@@ -130,14 +218,12 @@ function onError(err) {
 
 // ── Маркери на карті ──────────────────────────────────────────────────────────
 function updateMarkers(vehicles) {
-    const now = new Date().toLocaleTimeString('uk-UA');
-    document.getElementById('last-update').textContent = 'Оновлено: ' + now;
-    document.getElementById('stat-vehicles').textContent = vehicles.filter(v => v.online).length;
-
-    const receivedIds = new Set();
+    const now = Date.now();
+    document.getElementById('last-update').textContent =
+        'Оновлено: ' + new Date().toLocaleTimeString('uk-UA');
 
     vehicles.forEach(vehicle => {
-        receivedIds.add(vehicle.vehicleId);
+        state.lastSeen.set(vehicle.vehicleId, now);
 
         if (state.markers.has(vehicle.vehicleId)) {
             const marker = state.markers.get(vehicle.vehicleId);
@@ -147,18 +233,21 @@ function updateMarkers(vehicles) {
         } else {
             const marker = createMarker(vehicle);
             state.markers.set(vehicle.vehicleId, marker);
-            if (state.activeRouteId === null) {
-                marker.addTo(map);
-            }
+            if (isVehicleVisible(vehicle)) marker.addTo(map);
         }
     });
 
+    // Видаляємо застарілі маркери
     state.markers.forEach((marker, id) => {
-        if (!receivedIds.has(id)) {
+        const age = now - (state.lastSeen.get(id) ?? 0);
+        if (age > STALE_MS) {
             map.removeLayer(marker);
             state.markers.delete(id);
+            state.lastSeen.delete(id);
         }
     });
+
+    document.getElementById('stat-vehicles').textContent = state.markers.size;
 }
 
 function createMarker(vehicle) {
@@ -177,30 +266,21 @@ function createVehicleIcon(vehicle) {
     const bearing = vehicle.bearing || 0;
     const size    = 30;
     const r       = size / 2;
-    // Стрілка: великий трикутник зовні кола, обертається разом із SVG
-    const arrowH  = 20;  // висота стрілки
-    const arrowW  = 20;  // ширина основи стрілки
-    // SVG viewBox більший щоб стрілка не обрізалась
+    const arrowH  = 20;
+    const arrowW  = 20;
     const vb      = size + arrowH * 2;
     const cx      = vb / 2;
     const cy      = vb / 2;
-    // Вершина стрілки (вгорі), основа — на межі кола
     const tipY    = cy - r - arrowH;
     const baseY   = cy - r + 2;
 
     return L.divIcon({
         html: `<svg width="${vb}" height="${vb}" viewBox="0 0 ${vb} ${vb}" xmlns="http://www.w3.org/2000/svg"
                     style="transform:rotate(${bearing}deg); overflow:visible; display:block;">
-                 <!-- стрілка -->
                  <polygon
                    points="${cx},${tipY} ${cx - arrowW/2},${baseY} ${cx + arrowW/2},${baseY}"
-                   fill="${color}"
-                   stroke="white"
-                   stroke-width="2"
-                   stroke-linejoin="round"/>
-                 <!-- коло -->
+                   fill="${color}" stroke="white" stroke-width="2" stroke-linejoin="round"/>
                  <circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" stroke="white" stroke-width="2.5"/>
-                 <!-- текст маршруту (counter-rotate щоб не крутився разом) -->
                  <text x="${cx}" y="${cy + 4}"
                        text-anchor="middle"
                        font-size="${route.length > 2 ? 11 : 13}"

@@ -71,7 +71,7 @@ public final class TransportCvSignature {
             byte[] hash = md.digest(input.getBytes(StandardCharsets.UTF_8));
             StringBuilder sb = new StringBuilder(40);
             for (byte b : hash) {
-                sb.append(String.format("%02x", b));
+                sb.append(String.format("%02X", b));   // верхній регістр
             }
             return sb.toString();
         } catch (NoSuchAlgorithmException e) {
