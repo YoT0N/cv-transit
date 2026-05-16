@@ -37,8 +37,8 @@ public class TransportCvCollector {
         try {
             TransportCvResponseDto response = webClient.post()
                     .uri(URL)
-                    .contentType(new MediaType(MediaType.APPLICATION_FORM_URLENCODED, java.nio.charset.StandardCharsets.UTF_8))
-                    .bodyValue("selectedRoutesStr=")  // порожній = всі маршрути
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue("{\"routeIds\":[]}")
                     .retrieve()
                     .bodyToMono(TransportCvResponseDto.class)
                     .block();
@@ -57,7 +57,7 @@ public class TransportCvCollector {
             aggregationService.processPositions(positions);
 
         } catch (Exception e) {
-            log.error("TransportCvCollector: failed to fetch data", e);
+            log.warn("TransportCvCollector: failed to fetch — {}", e.getMessage());
         }
     }
 

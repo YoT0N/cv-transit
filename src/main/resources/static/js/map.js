@@ -11,9 +11,6 @@ const TOPIC_ALL = '/topic/vehicles';
 const API_ROUTES = '/api/routes';
 const API_VEHICLES = '/api/vehicles';
 
-// Емодзі за типом транспорту
-const TYPE_ICON = { BUS: '🚌', TROLL: '🚎', TRAM: '🚋', TAXI: '🚕', DEFAULT: '🚍' };
-
 // ── Стан ──────────────────────────────────────────────────────────────────────
 const state = {
     markers: new Map(),      // vehicleId → Leaflet marker
@@ -30,7 +27,6 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
 }).addTo(map);
 
-// Кнопки зуму праворуч
 L.control.zoom({ position: 'bottomright' }).addTo(map);
 
 // ── Завантаження маршрутів ────────────────────────────────────────────────────
@@ -49,7 +45,6 @@ function renderRouteList(routes) {
     const list = document.getElementById('route-list');
     list.innerHTML = '';
 
-    // Пункт "Всі маршрути"
     const allItem = createRouteItem(null, 'Всі', '', null);
     allItem.classList.add('route-item--active');
     list.appendChild(allItem);
@@ -80,25 +75,26 @@ function createRouteItem(id, name, count, color) {
 
     item.appendChild(badge);
     item.appendChild(info);
-
     item.addEventListener('click', () => selectRoute(id, item));
     return item;
 }
 
 function selectRoute(routeId, element) {
-    // Знімаємо активний клас з усіх
     document.querySelectorAll('.route-item').forEach(el => el.classList.remove('route-item--active'));
     element.classList.add('route-item--active');
-
     state.activeRouteId = routeId;
 
-    // Показуємо/ховаємо маркери
-    state.markers.forEach((marker, vehicleId) => {
+    state.markers.forEach((marker) => {
         const vehicle = marker.vehicleData;
-        const show = routeId === null || vehicle?.routeId === routeId;
+        const show = routeId === null || vehicle?.routeName === getRouteNameById(routeId);
         if (show) marker.addTo(map);
         else map.removeLayer(marker);
     });
+}
+
+function getRouteNameById(routeId) {
+    const route = state.routes.find(r => r.id === routeId);
+    return route ? route.name : null;
 }
 
 // ── Пошук маршруту ────────────────────────────────────────────────────────────
@@ -114,14 +110,12 @@ document.getElementById('route-search').addEventListener('input', function () {
 function connectWebSocket() {
     const socket = new SockJS(WS_URL);
     state.stompClient = Stomp.over(socket);
-    state.stompClient.debug = null; // вимикаємо STOMP логи в консолі
-
+    state.stompClient.debug = null;
     state.stompClient.connect({}, onConnected, onError);
 }
 
 function onConnected() {
     setBadge('connected', '● онлайн');
-
     state.stompClient.subscribe(TOPIC_ALL, message => {
         const vehicles = JSON.parse(message.body);
         updateMarkers(vehicles);
@@ -131,8 +125,6 @@ function onConnected() {
 function onError(err) {
     console.error('WebSocket error:', err);
     setBadge('error', '✕ помилка');
-
-    // Повторне підключення через 5 сек
     setTimeout(connectWebSocket, 5000);
 }
 
@@ -148,24 +140,19 @@ function updateMarkers(vehicles) {
         receivedIds.add(vehicle.vehicleId);
 
         if (state.markers.has(vehicle.vehicleId)) {
-            // Плавно переміщуємо існуючий маркер
             const marker = state.markers.get(vehicle.vehicleId);
-            animateMarker(marker, vehicle);
-            updateMarkerRotation(marker, vehicle.bearing);
+            marker.setLatLng([vehicle.lat, vehicle.lng]);
+            marker.setIcon(createVehicleIcon(vehicle));
             marker.vehicleData = vehicle;
         } else {
-            // Створюємо новий маркер
             const marker = createMarker(vehicle);
             state.markers.set(vehicle.vehicleId, marker);
-
-            // Показуємо тільки якщо відповідає фільтру
-            if (state.activeRouteId === null || vehicle.routeId === state.activeRouteId) {
+            if (state.activeRouteId === null) {
                 marker.addTo(map);
             }
         }
     });
 
-    // Видаляємо маркери транспорту що вже не онлайн
     state.markers.forEach((marker, id) => {
         if (!receivedIds.has(id)) {
             map.removeLayer(marker);
@@ -175,53 +162,59 @@ function updateMarkers(vehicles) {
 }
 
 function createMarker(vehicle) {
-    const icon = createVehicleIcon(vehicle);
-
     const marker = L.marker([vehicle.lat, vehicle.lng], {
-        icon,
-        title: buildTitle(vehicle),
+        icon: createVehicleIcon(vehicle),
+        title: `Маршрут ${vehicle.routeName || '?'} | борт ${vehicle.busNumber || '?'}`,
     });
-
     marker.vehicleData = vehicle;
-
     marker.on('click', () => showVehiclePanel(vehicle));
-
     return marker;
 }
 
 function createVehicleIcon(vehicle) {
-    const emoji = TYPE_ICON[vehicle.type] || TYPE_ICON.DEFAULT;
-    const color = vehicle.color || '#1a73e8';
-    const size = 36;
+    const color   = vehicle.color || '#1a73e8';
+    const route   = vehicle.routeName || '?';
+    const bearing = vehicle.bearing || 0;
+    const size    = 30;
+    const r       = size / 2;
+    // Стрілка: великий трикутник зовні кола, обертається разом із SVG
+    const arrowH  = 20;  // висота стрілки
+    const arrowW  = 20;  // ширина основи стрілки
+    // SVG viewBox більший щоб стрілка не обрізалась
+    const vb      = size + arrowH * 2;
+    const cx      = vb / 2;
+    const cy      = vb / 2;
+    // Вершина стрілки (вгорі), основа — на межі кола
+    const tipY    = cy - r - arrowH;
+    const baseY   = cy - r + 2;
 
     return L.divIcon({
-        html: `<div class="vehicle-marker"
-                    style="width:${size}px;height:${size}px;background:${color};"
-                    data-bearing="${vehicle.bearing || 0}">
-                   ${emoji}
-               </div>`,
-        iconSize:   [size, size],
-        iconAnchor: [size / 2, size / 2],
+        html: `<svg width="${vb}" height="${vb}" viewBox="0 0 ${vb} ${vb}" xmlns="http://www.w3.org/2000/svg"
+                    style="transform:rotate(${bearing}deg); overflow:visible; display:block;">
+                 <!-- стрілка -->
+                 <polygon
+                   points="${cx},${tipY} ${cx - arrowW/2},${baseY} ${cx + arrowW/2},${baseY}"
+                   fill="${color}"
+                   stroke="white"
+                   stroke-width="2"
+                   stroke-linejoin="round"/>
+                 <!-- коло -->
+                 <circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" stroke="white" stroke-width="2.5"/>
+                 <!-- текст маршруту (counter-rotate щоб не крутився разом) -->
+                 <text x="${cx}" y="${cy + 4}"
+                       text-anchor="middle"
+                       font-size="${route.length > 2 ? 11 : 13}"
+                       font-weight="700"
+                       font-family="Segoe UI, system-ui, sans-serif"
+                       fill="white"
+                       style="transform:rotate(-${bearing}deg); transform-origin:${cx}px ${cy}px;">
+                   ${route}
+                 </text>
+               </svg>`,
+        iconSize:   [vb, vb],
+        iconAnchor: [vb / 2, vb / 2],
         className:  '',
     });
-}
-
-function updateMarkerRotation(marker, bearing) {
-    const el = marker.getElement();
-    if (!el) return;
-    const inner = el.querySelector('.vehicle-marker');
-    if (inner) inner.style.transform = `rotate(${bearing || 0}deg)`;
-}
-
-function animateMarker(marker, vehicle) {
-    // Leaflet не має вбудованої анімації — просто setLatLng
-    // Для плавності можна додати CSS transition на .vehicle-marker
-    marker.setLatLng([vehicle.lat, vehicle.lng]);
-    marker.setIcon(createVehicleIcon(vehicle));
-}
-
-function buildTitle(v) {
-    return `Маршрут ${v.routeName || '?'} | борт ${v.busNumber || '?'} | ${v.speed || 0} км/год`;
 }
 
 // ── Vehicle detail panel ──────────────────────────────────────────────────────
@@ -230,7 +223,7 @@ function showVehiclePanel(vehicle) {
     const content = document.getElementById('vehicle-panel-content');
 
     content.innerHTML = `
-        <h3>${TYPE_ICON[vehicle.type] || '🚍'} Маршрут ${vehicle.routeName || '—'}</h3>
+        <h3>🚌 Маршрут ${vehicle.routeName || '—'}</h3>
         <div class="vehicle-detail">
             <div>Борт: <strong>${vehicle.busNumber || '—'}</strong></div>
             <div>Швидкість: <strong>${vehicle.speed ? Math.round(vehicle.speed) + ' км/год' : '—'}</strong></div>
@@ -240,7 +233,6 @@ function showVehiclePanel(vehicle) {
             </strong></div>
         </div>
     `;
-
     panel.classList.remove('vehicle-panel--hidden');
 }
 
@@ -255,7 +247,7 @@ function setBadge(type, text) {
     badge.className = `badge badge--${type}`;
 }
 
-// ── Завантаження початкових даних через REST ──────────────────────────────────
+// ── Початкові дані через REST ─────────────────────────────────────────────────
 async function loadInitialVehicles() {
     try {
         const res = await fetch(API_VEHICLES);
@@ -280,6 +272,6 @@ async function loadInitialVehicles() {
 // ── Старт ─────────────────────────────────────────────────────────────────────
 (async () => {
     await loadRoutes();
-    await loadInitialVehicles(); // одразу показуємо транспорт, не чекаємо WebSocket
-    connectWebSocket();          // потім підключаємось для live оновлень
+    await loadInitialVehicles();
+    connectWebSocket();
 })();

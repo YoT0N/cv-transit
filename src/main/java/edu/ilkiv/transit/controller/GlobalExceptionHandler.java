@@ -37,4 +37,11 @@ public class GlobalExceptionHandler {
         pd.setDetail("Internal server error");
         return pd;
     }
+
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ProblemDetail handleNoResource(Exception ex) {
+        ProblemDetail pd = ProblemDetail.forStatus(HttpStatus.NOT_FOUND);
+        pd.setDetail(ex.getMessage());
+        return pd;
+    }
 }
