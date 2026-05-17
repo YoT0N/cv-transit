@@ -215,10 +215,14 @@ public class EasyWayCollector implements WebSocket.Listener {
         messageBuffer.add(chunk);
 
         if (last) {
-            // Склеюємо всі фрагменти
             byte[] fullMessage = mergeChunks(messageBuffer);
             messageBuffer.clear();
-            processMessage(fullMessage);
+            try {
+                byte[] decompressed = decompress(fullMessage);
+                processMessage(decompressed);
+            } catch (Exception e) {
+                log.warn("EasyWayCollector: decompress failed — {}", e.getMessage());
+            }
         }
 
         ws.request(1); // дозволяємо наступне повідомлення
@@ -233,15 +237,49 @@ public class EasyWayCollector implements WebSocket.Listener {
             textBuffer.setLength(0);
             try {
                 byte[] decoded = java.util.Base64.getDecoder().decode(fullText);
-                log.debug("EasyWayCollector: decoded {} bytes from base64 text", decoded.length);
-                processMessage(decoded);
+                byte[] decompressed = decompress(decoded);
+                log.debug("EasyWayCollector: decoded {} bytes → decompressed {} bytes",
+                        decoded.length, decompressed.length);
+                processMessage(decompressed);
             } catch (Exception e) {
-                log.warn("EasyWayCollector: failed to decode base64 text — {}", e.getMessage());
+                log.warn("EasyWayCollector: failed to decode/decompress — {}", e.getMessage());
             }
         }
         ws.request(1);
         return null;
     }
+
+    private static byte[] decompress(byte[] data) throws java.io.IOException {
+        // Перевіряємо magic bytes:
+        // gzip:  0x1F 0x8B
+        // zlib:  0x78 0x9C / 0x78 0x01 / 0x78 0xDA
+        // якщо не стиснене — повертаємо як є
+        if (data.length < 2) return data;
+
+        int b0 = data[0] & 0xFF;
+        int b1 = data[1] & 0xFF;
+
+        if (b0 == 0x1F && b1 == 0x8B) {
+            // gzip
+            try (var in = new java.util.zip.GZIPInputStream(
+                    new java.io.ByteArrayInputStream(data));
+                 var out = new java.io.ByteArrayOutputStream()) {
+                in.transferTo(out);
+                return out.toByteArray();
+            }
+        } else if (b0 == 0x78) {
+            // zlib (deflate with header)
+            try (var in = new java.util.zip.InflaterInputStream(
+                    new java.io.ByteArrayInputStream(data));
+                 var out = new java.io.ByteArrayOutputStream()) {
+                in.transferTo(out);
+                return out.toByteArray();
+            }
+        }
+
+        return data; // не стиснене
+    }
+
 
     @Override
     public void onOpen(WebSocket ws) {
@@ -287,32 +325,39 @@ public class EasyWayCollector implements WebSocket.Listener {
         try {
             List<VehiclePositionDto> positions = new ArrayList<>();
             ProtoReader reader = new ProtoReader(data);
+            int fieldCount = 0;
 
             while (reader.hasMore()) {
                 int tag = reader.readVarint32();
                 int fieldNumber = tag >>> 3;
                 int wireType   = tag & 0x7;
+                fieldCount++;
 
                 if (fieldNumber == 1 && wireType == 0) {
-                    long timestamp = reader.readVarint64(); // timestamp
-                    log.debug("EasyWayCollector: message timestamp={}", timestamp);
+                    long timestamp = reader.readVarint64();
+                    log.info("EasyWay: timestamp={}, data[0]={}, data[1]={}, data[2]={}",
+                            timestamp, data[0] & 0xFF, data[1] & 0xFF, data[2] & 0xFF);
                 } else if (fieldNumber == 2 && wireType == 2) {
-                    // routesPositionsMap entry (repeated)
                     byte[] mapEntry = reader.readBytes();
                     parseMapEntry(mapEntry, positions);
                 } else {
+                    log.info("EasyWay: unexpected field={} wireType={} at start", fieldNumber, wireType);
                     reader.skipField(wireType);
                 }
             }
 
+            log.info("EasyWay: fieldCount={}, positions={}, dataLen={}, first3bytes={},{},{}",
+                    fieldCount, positions.size(), data.length,
+                    data[0]&0xFF, data[1]&0xFF, data[2]&0xFF);
+
             if (!positions.isEmpty()) {
-                log.debug("EasyWayCollector: parsed {} vehicles", positions.size());
                 aggregationService.processPositions(positions);
             }
 
         } catch (Exception e) {
-            log.warn("EasyWayCollector: failed to parse message ({} bytes) — {}",
-                    data.length, e.getMessage());
+            log.warn("EasyWayCollector: failed ({} bytes) — {}, first3bytes={},{},{}",
+                    data.length, e.getMessage(),
+                    data[0]&0xFF, data[1]&0xFF, data[2]&0xFF);
         }
     }
 
@@ -503,7 +548,7 @@ public class EasyWayCollector implements WebSocket.Listener {
                 case 1 -> pos += 8;
                 case 2 -> { int len = readVarint32(); pos += len; }
                 case 5 -> pos += 4;
-                default -> throw new IllegalArgumentException("Unknown wire type: " + wireType);
+                default -> pos = buf.length; // невідомий wire type — пропускаємо пакет
             }
         }
     }
