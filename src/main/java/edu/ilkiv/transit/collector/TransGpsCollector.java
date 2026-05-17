@@ -48,7 +48,7 @@ public class TransGpsCollector {
 
             List<VehiclePositionDto> positions = response.values().stream()
                     .filter(v -> v.getLat() != null && v.getLng() != null)
-                    .filter(v -> Boolean.TRUE.equals(v.getOnline()) || !Boolean.TRUE.equals(v.getInDepo()))
+                    .filter(v -> Boolean.TRUE.equals(v.getOnline()))
                     .map(this::toPositionDto)
                     .toList();
 

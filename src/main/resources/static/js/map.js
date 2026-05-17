@@ -274,12 +274,18 @@ function createVehicleIcon(vehicle) {
     const tipY    = cy - r - arrowH;
     const baseY   = cy - r + 2;
 
+    // Стрілка видима тільки якщо транспорт рухається (швидкість > 2 км/год)
+    const isMoving = vehicle.speed && vehicle.speed > 2;
+    const arrowSvg = isMoving ? `
+        <polygon
+          points="${cx},${tipY} ${cx - arrowW/2},${baseY} ${cx + arrowW/2},${baseY}"
+          fill="${color}" stroke="white" stroke-width="2" stroke-linejoin="round"/>
+    ` : '';
+
     return L.divIcon({
         html: `<svg width="${vb}" height="${vb}" viewBox="0 0 ${vb} ${vb}" xmlns="http://www.w3.org/2000/svg"
-                    style="transform:rotate(${bearing}deg); overflow:visible; display:block;">
-                 <polygon
-                   points="${cx},${tipY} ${cx - arrowW/2},${baseY} ${cx + arrowW/2},${baseY}"
-                   fill="${color}" stroke="white" stroke-width="2" stroke-linejoin="round"/>
+                    style="transform:rotate(${isMoving ? bearing : 0}deg); overflow:visible; display:block;">
+                 ${arrowSvg}
                  <circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" stroke="white" stroke-width="2.5"/>
                  <text x="${cx}" y="${cy + 4}"
                        text-anchor="middle"
@@ -287,7 +293,7 @@ function createVehicleIcon(vehicle) {
                        font-weight="700"
                        font-family="Segoe UI, system-ui, sans-serif"
                        fill="white"
-                       style="transform:rotate(-${bearing}deg); transform-origin:${cx}px ${cy}px;">
+                       style="transform:rotate(-${isMoving ? bearing : 0}deg); transform-origin:${cx}px ${cy}px;">
                    ${route}
                  </text>
                </svg>`,

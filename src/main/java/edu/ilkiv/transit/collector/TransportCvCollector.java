@@ -147,7 +147,7 @@ public class TransportCvCollector {
                 .speed(dto.getSpeed() != null ? dto.getSpeed().floatValue() : 0f)
                 .bearing(dto.getAngle() != null ? dto.getAngle().floatValue() : 0f)
                 .busNumber(dto.getTransportNumber())
-                .online(!"stay".equals(dto.getStatusName()))
+                .online(true)
                 .build();
     }
 }
