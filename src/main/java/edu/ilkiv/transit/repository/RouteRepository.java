@@ -16,4 +16,7 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
     List<Route> findByIsActiveTrue();
 
     List<Route> findByTypeAndIsActiveTrue(TransportType type);
+
+    Optional<Route> findByNameAndType(String name, TransportType type);
+
 }

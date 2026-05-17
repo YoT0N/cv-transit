@@ -115,9 +115,15 @@ public class VehicleAggregationService {
         // Крок 2: шукаємо за назвою маршруту
         Route route = null;
         if (dto.getRouteName() != null) {
-            route = routeRepository.findByName(dto.getRouteName()).orElse(null);
-            log.debug("resolveRoute: lookup by name='{}' → {}",
-                    dto.getRouteName(), route != null ? "found id=" + route.getId() : "not found");
+            TransportType type = dto.getType() != null ? dto.getType() : TransportType.BUS;
+            route = routeRepository.findByNameAndType(dto.getRouteName(), type).orElse(null);
+            if (route == null) {
+                route = routeRepository.findByName(dto.getRouteName())
+                        .filter(r -> r.getType() == type || dto.getType() == null)
+                        .orElse(null);
+            }
+            log.debug("resolveRoute: lookup by name='{}' type='{}' → {}",
+                    dto.getRouteName(), type, route != null ? "found id=" + route.getId() : "not found");
         }
 
         // Крок 3: створюємо новий маршрут
@@ -138,18 +144,17 @@ public class VehicleAggregationService {
 
         // Крок 4: зберігаємо маппінг
         if (dto.getExternalRouteId() != null) {
-            // Перевіряємо чи маппінг вже існує (щоб уникнути UniqueConstraint violation)
-            boolean exists = sourceMappingRepository
-                    .findByEntityTypeAndSourceAndSourceId(
-                            "route", dto.getSource().name(), dto.getExternalRouteId())
-                    .isPresent();
-            if (!exists) {
+            try {
                 sourceMappingRepository.save(SourceMapping.builder()
                         .entityType("route")
                         .canonicalId(route.getId())
                         .source(dto.getSource())
                         .sourceId(dto.getExternalRouteId())
                         .build());
+            } catch (Exception e) {
+                // вже існує — ігноруємо duplicate key
+                log.debug("resolveRoute: mapping already exists for source={} routeId={}",
+                        dto.getSource(), dto.getExternalRouteId());
             }
         }
 

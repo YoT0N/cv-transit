@@ -84,6 +84,21 @@ html, body { height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; }
 .stat__value { font-size: 24px; font-weight: 700; color: var(--color-primary); }
 .stat__label { font-size: 11px; color: var(--color-muted); text-align: center; }
 
+/* ── Route section headers ───────────────────────────────────────────────── */
+.route-section-header {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    color: var(--color-muted);
+    padding: 10px 10px 4px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-top: 1px solid var(--color-border);
+    margin-top: 4px;
+}
+
 /* ── Route filter ─────────────────────────────────────────────────────────── */
 #route-filter {
     flex: 1;
