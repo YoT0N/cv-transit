@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -27,6 +28,14 @@ public class VehicleAggregationService {
     private final GpsHistoryRepository gpsHistoryRepository;
     private final VehicleBroadcastService broadcastService;
     private final VehicleService vehicleService;
+
+    // В VehicleAggregationService додай:
+    private static final Map<DataSource, Integer> SOURCE_PRIORITY = Map.of(
+            DataSource.easyway,     1,  // найвищий пріоритет
+            DataSource.transgps,    2,
+            DataSource.nimbus,      3,
+            DataSource.transportcv, 4
+    );
 
     @Transactional
     public void processPositions(List<VehiclePositionDto> positions) {
@@ -78,6 +87,12 @@ public class VehicleAggregationService {
         }
         vehicleRepository.save(vehicle);
 
+        // Дедублікація: якщо поруч є той самий маршрут з іншого джерела —
+        // ховаємо те що має нижчий пріоритет
+        if (route != null) {
+            deduplicateNearby(vehicle, route, dto.getSource());
+        }
+
         GpsHistory history = GpsHistory.builder()
                 .vehicle(vehicle)
                 .lat(dto.getLat())
@@ -87,6 +102,37 @@ public class VehicleAggregationService {
                 .build();
         gpsHistoryRepository.save(history);
         return vehicle;
+    }
+
+    private void deduplicateNearby(Vehicle current, Route route, DataSource currentSource) {
+        int currentPriority = SOURCE_PRIORITY.getOrDefault(currentSource, 99);
+
+        List<Vehicle> nearby = vehicleRepository.findNearbyFromOtherSource(
+                current.getLat(), current.getLng(), 200.0, currentSource, route);
+
+        for (Vehicle other : nearby) {
+            int otherPriority = SOURCE_PRIORITY.getOrDefault(other.getSource(), 99);
+
+            if (currentPriority < otherPriority) {
+                // Поточне джерело краще — ховаємо дублікат
+                if (other.getIsOnline()) {
+                    other.setIsOnline(false);
+                    vehicleRepository.save(other);
+                    log.debug("Dedup: hiding vehicle {} ({}) — duplicate of {} ({}) within 100m on route {}",
+                            other.getId(), other.getSource(),
+                            current.getId(), currentSource,
+                            route.getName());
+                }
+            } else {
+                // Інше джерело краще — ховаємо поточне
+                current.setIsOnline(false);
+                vehicleRepository.save(current);
+                log.debug("Dedup: hiding vehicle {} ({}) — duplicate of {} ({}) within 100m on route {}",
+                        current.getId(), currentSource,
+                        other.getId(), other.getSource(),
+                        route.getName());
+            }
+        }
     }
 
     private Route resolveRoute(VehiclePositionDto dto) {

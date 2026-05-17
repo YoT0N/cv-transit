@@ -448,6 +448,26 @@ public class EasyWayCollector implements WebSocket.Listener {
             switch (fieldNum) {
                 case 1 -> routeId = reader.readVarint32();
                 case 2 -> {
+                    // Це RoutePositions — ще один рівень вкладеності
+                    byte[] routePositions = reader.readBytes();
+                    parseRoutePositions(routePositions, routeId, out);
+                }
+                default -> reader.skipField(wireType);
+            }
+        }
+    }
+
+    private void parseRoutePositions(byte[] data, int routeId, List<VehiclePositionDto> out) {
+        ProtoReader reader = new ProtoReader(data);
+
+        while (reader.hasMore()) {
+            int tag      = reader.readVarint32();
+            int fieldNum = tag >>> 3;
+            int wireType = tag & 0x7;
+
+            switch (fieldNum) {
+                case 1 -> {
+                    // Тут вже реальний VehiclePosition
                     byte[] vehicleBlock = reader.readBytes();
                     VehiclePositionDto dto = parseVehicle(vehicleBlock, routeId);
                     if (dto != null) out.add(dto);
@@ -456,6 +476,7 @@ public class EasyWayCollector implements WebSocket.Listener {
             }
         }
     }
+
 
     private VehiclePositionDto parseVehicle(byte[] data, int routeId) {
         ProtoReader reader = new ProtoReader(data);

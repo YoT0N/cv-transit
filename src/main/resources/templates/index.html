@@ -60,6 +60,44 @@
         <div id="vehicle-panel-content"></div>
     </div>
 
+    <!-- Nearby panel -->
+    <div id="nearby-panel" style="display:none">
+        <div id="nearby-panel-header">
+            <span>📍 Маршрути поблизу <span id="nearby-radius-label">(300 м)</span></span>
+            <button id="nearby-close-btn" style="background:none;border:none;color:white;cursor:pointer;font-size:16px;">✕</button>
+        </div>
+        <div id="nearby-panel-body">
+            <div class="nearby-empty">Перетягніть маркер для пошуку</div>
+        </div>
+    </div>
+
+    <!-- Geo button -->
+    <button class="geo-btn" id="geo-btn" title="Пошук маршрутів поблизу">📍</button>
+
+    <!-- Route planner -->
+    <div id="planner-panel">
+        <div id="planner-header">
+            <span>🗺 Планувальник маршруту</span>
+            <button id="planner-close" style="background:none;border:none;color:white;cursor:pointer;font-size:16px;">✕</button>
+        </div>
+        <div id="planner-inputs">
+            <div class="planner-input-row">
+                <div class="planner-dot" style="background:#34a853"></div>
+                <input class="planner-input" id="planner-from" placeholder="Звідки..." readonly/>
+                <button class="planner-pin-btn" id="pin-from-btn" title="Вказати на карті">📍</button>
+            </div>
+            <div class="planner-input-row">
+                <div class="planner-dot" style="background:#ea4335"></div>
+                <input class="planner-input" id="planner-to" placeholder="Куди..." readonly/>
+                <button class="planner-pin-btn" id="pin-to-btn" title="Вказати на карті">📍</button>
+            </div>
+            <button id="planner-search-btn" disabled>Знайти маршрут</button>
+        </div>
+        <div id="planner-results"></div>
+    </div>
+
+    <button class="planner-btn" id="planner-btn" title="Планувальник маршруту">🗺</button>
+
 </div>
 
 <script th:src="@{/js/map.js}"></script>
