@@ -49,7 +49,9 @@ public class TransportCvCollector {
     private static final Map<Long, String> ROUTE_NAMES = Map.of(
             121L,  "3",
             823L,  "21",
-            1922L, "26"
+            1922L, "26",
+            1942L, "37",
+            842L, "33"
     );
 
     private final WebClient webClient;
