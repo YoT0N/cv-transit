@@ -96,14 +96,9 @@ class VehicleBroadcastServiceTest {
 
         broadcastService.broadcast(List.of(v));
 
-        @SuppressWarnings("unchecked")
-        List<VehiclePositionEvent> events = (List<VehiclePositionEvent>)
-                ArgumentCaptor.forClass(Object.class)
-                        .capture();
-
-        // Верифікуємо через окремий captor
         ArgumentCaptor<Object> cap = ArgumentCaptor.forClass(Object.class);
         verify(messagingTemplate).convertAndSend(eq("/topic/vehicles"), cap.capture());
+
         @SuppressWarnings("unchecked")
         List<VehiclePositionEvent> result = (List<VehiclePositionEvent>) cap.getValue();
 
