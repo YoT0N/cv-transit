@@ -50,8 +50,10 @@ public class TransportCvCollector {
             121L,  "3",
             823L,  "21",
             1922L, "26",
+            842L, "33",
+            863L, "36",
             1942L, "37",
-            842L, "33"
+            1421L, "43"
     );
 
     private final WebClient webClient;

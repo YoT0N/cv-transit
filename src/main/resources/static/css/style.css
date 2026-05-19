@@ -172,14 +172,16 @@ html, body { height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; }
 /* ── Vehicle detail panel ─────────────────────────────────────────────────── */
 .vehicle-panel {
     position: absolute;
+    /* Піднімаємо вище кнопок geo/planner щоб ті не перекривали */
     bottom: 24px;
-    right: 24px;
+    right: 72px;   /* відступ від краю, щоб не лізло під кнопки */
     width: 260px;
     background: var(--color-surface);
     border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    z-index: 500;
+    box-shadow: 0 4px 16px rgba(0,0,0,.18);
+    z-index: 600;  /* вище кнопок (500) */
     padding: 16px;
+    padding-top: 36px; /* місце для кнопки закриття */
     transition: opacity .2s, transform .2s;
 }
 .vehicle-panel--hidden {
@@ -190,10 +192,25 @@ html, body { height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; }
 
 #vehicle-panel-close {
     position: absolute;
-    top: 8px; right: 8px;
-    background: none; border: none;
-    cursor: pointer; font-size: 14px;
+    top: 0;
+    right: 0;
+    /* Збільшена область кліку */
+    width: 36px;
+    height: 36px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
     color: var(--color-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 0 var(--radius) 0 var(--radius);
+    transition: background .15s, color .15s;
+}
+#vehicle-panel-close:hover {
+    background: var(--color-bg);
+    color: var(--color-danger);
 }
 
 .vehicle-panel h3 { font-size: 16px; margin-bottom: 8px; }
@@ -326,7 +343,16 @@ html, body { height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; }
     font-weight: 400;
 }
 
-/* ── Geo button ───────────────────────────────────────────────────────────── */
+/* ── Floating action buttons (geo + planner) ──────────────────────────────── */
+/*
+ * Кнопки розміщені вертикально стопкою ЗЛІВА від vehicle-panel.
+ * right: 16px — прилипають до правого краю.
+ * bottom: збільшено щоб не перекривати vehicle-panel (right: 72px).
+ *
+ * Якщо потрібно: можна змінити right на менше значення,
+ * але тоді треба відповідно змінити .vehicle-panel right.
+ */
+
 .geo-btn {
     position: absolute;
     bottom: 100px;
@@ -345,6 +371,8 @@ html, body { height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; }
     font-size: 20px;
     transition: background .15s;
 }
+.geo-btn:hover { background: var(--color-bg); }
+.geo-btn--active { background: #e8f0fe; }
 
 /* ── Route planner ────────────────────────────────────────────────────────── */
 #planner-panel {
@@ -533,6 +561,3 @@ html, body { height: 100%; font-family: 'Segoe UI', system-ui, sans-serif; }
 }
 .planner-btn:hover { background: var(--color-bg); }
 .planner-btn.active { background: #e8f0fe; }
-
-.geo-btn:hover { background: var(--color-bg); }
-.geo-btn--active { background: #e8f0fe; }
