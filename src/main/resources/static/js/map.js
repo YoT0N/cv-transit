@@ -303,7 +303,8 @@ document.getElementById('route-search').addEventListener('input', function () {
         let next = header.nextElementSibling;
         let hasVisible = false;
         while (next && !next.classList.contains('route-section-header')) {
-            if (next.dataset.routeId &&
+            if (next.dataset.routeId !== undefined &&
+                next.dataset.routeId !== '' &&  // не кнопка "Всі"
                 next.id !== 'clear-selection' &&
                 next.style.display !== 'none') {
                 hasVisible = true;

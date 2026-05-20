@@ -56,7 +56,7 @@ public class TransportCvCollector {
      */
     private static final Map<Long, TransportType> ROUTE_TYPES = Map.of(
             2042L, TransportType.TROLL,  // тролейбус 11
-            121L,  TransportType.TROLL,  // тролейбус 3
+            121L,  TransportType.BUS,  // тролейбус 3
             823L,  TransportType.BUS,
             1922L, TransportType.BUS,
             842L,  TransportType.BUS,

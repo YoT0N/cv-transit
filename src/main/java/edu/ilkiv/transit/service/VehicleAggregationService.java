@@ -191,8 +191,19 @@ public class VehicleAggregationService {
             Optional<SourceMapping> mapping = sourceMappingRepository
                     .findByEntityTypeAndSourceAndSourceId(
                             "route", dto.getSource().name(), dto.getExternalRouteId());
+
             if (mapping.isPresent()) {
-                return routeRepository.findById(mapping.get().getCanonicalId()).orElse(null);
+                Route found = routeRepository.findById(mapping.get().getCanonicalId()).orElse(null);
+                if (found != null && found.getType() == type) {
+                    log.debug("resolveRoute: found via mapping source={} sourceId={} → route '{}' type={}",
+                            dto.getSource(), dto.getExternalRouteId(), found.getName(), found.getType());
+                    return found;
+                }
+                // mapping застарів або некоректний — видаляємо і шукаємо заново
+                log.warn("resolveRoute: mapping type mismatch — source={} sourceId={} expected={} got={}, dropping mapping",
+                        dto.getSource(), dto.getExternalRouteId(), type,
+                        found != null ? found.getType() : "null");
+                sourceMappingRepository.delete(mapping.get());
             }
         }
 
@@ -213,16 +224,19 @@ public class VehicleAggregationService {
             String name = dto.getRouteName() != null
                     ? dto.getRouteName()
                     : "id:" + dto.getExternalRouteId();
-
-            route = routeRepository.save(Route.builder()
-                    .name(name)
-                    .type(type)
-                    .color(dto.getColor())
-                    .isActive(true)
-                    .build());
-
-            log.info("resolveRoute: created route '{}' type={} (source={}, externalRouteId={})",
-                    route.getName(), type, dto.getSource(), dto.getExternalRouteId());
+            try {
+                route = routeRepository.save(Route.builder()
+                        .name(name)
+                        .type(type)
+                        .color(dto.getColor())
+                        .isActive(true)
+                        .build());
+                log.info("resolveRoute: created route '{}' type={}", name, type);
+            } catch (Exception e) {
+                // Інший потік вже створив — просто знайдемо
+                log.warn("resolveRoute: race condition creating '{}' type={}, retrying find", name, type);
+                route = routeRepository.findByNameAndType(name, type).orElse(null);
+            }
         }
 
         // ── Крок 4: зберігаємо маппінг для наступних запитів ─────────────────
