@@ -18,6 +18,8 @@ public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
 
     List<Vehicle> findByIsOnlineTrue();
 
+    List<Vehicle> findBySourceAndIsOnlineTrue(DataSource source);
+
     List<Vehicle> findByRouteIdAndIsOnlineTrue(Long routeId);
 
     @Query("""

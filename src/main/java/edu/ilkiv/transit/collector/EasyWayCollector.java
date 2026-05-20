@@ -80,11 +80,11 @@ public class EasyWayCollector implements WebSocket.Listener {
             Map.entry(1,  "1"),
             Map.entry(2,  "2"),
             Map.entry(3,  "4"),
-            Map.entry(4,  "3"),
+            Map.entry(4,  "3"),      // тролейбус 3
             Map.entry(6,  "6A"),
             Map.entry(7,  "6"),
             Map.entry(8,  "5"),
-            Map.entry(9,  "3"),
+            Map.entry(9,  "3"),      // автобус 3 — той самий номер, інший тип
             Map.entry(10, "4"),
             Map.entry(11, "6"),
             Map.entry(14, "26"),
@@ -128,12 +128,12 @@ public class EasyWayCollector implements WebSocket.Listener {
             Map.entry(1,  TransportType.TROLL),
             Map.entry(2,  TransportType.TROLL),
             Map.entry(3,  TransportType.TROLL),
-            Map.entry(4,  TransportType.TROLL),
+            Map.entry(4,  TransportType.TROLL),  // маршрут "3" тролейбус
             Map.entry(6,  TransportType.TROLL),
             Map.entry(7,  TransportType.TROLL),
             Map.entry(8,  TransportType.TROLL),
             Map.entry(75, TransportType.TROLL),
-            Map.entry(9,  TransportType.BUS),
+            Map.entry(9,  TransportType.BUS),    // маршрут "3" автобус
             Map.entry(10, TransportType.BUS),
             Map.entry(11, TransportType.BUS),
             Map.entry(14, TransportType.BUS),

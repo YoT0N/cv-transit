@@ -22,13 +22,6 @@ import reactor.core.publisher.Mono;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Збирає позиції транспорту з transport.cv.ua кожні 30 секунд.
- *
- * rtsId → routeName маппінг захардкоджений до тих пір поки не знайдемо
- * офіційний API маршрутів transport.cv.ua.
- * Додавати нові маршрути: просто додай рядок у ROUTE_NAMES.
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -43,17 +36,33 @@ public class TransportCvCollector {
     private static final String ACCEPT_LANG = "uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7";
 
     /**
-     * rtsId (з поля rtsId у відповіді transport.cv.ua) → людська назва маршруту.
-     * TODO: замінити на динамічне завантаження коли знайдемо API маршрутів.
+     * rtsId → назва маршруту.
+     * Додавати нові: знайти rtsId в логах ("unknown rtsId=XXXX") і додати рядок.
      */
     private static final Map<Long, String> ROUTE_NAMES = Map.of(
+            2042L, "11",
             121L,  "3",
             823L,  "21",
             1922L, "26",
-            842L, "33",
-            863L, "36",
+            842L,  "33",
+            863L,  "36",
             1942L, "37",
             1421L, "43"
+    );
+
+    /**
+     * rtsId → тип транспорту.
+     * Якщо rtsId відсутній тут — використовується BUS як дефолт.
+     */
+    private static final Map<Long, TransportType> ROUTE_TYPES = Map.of(
+            2042L, TransportType.TROLL,  // тролейбус 11
+            121L,  TransportType.TROLL,  // тролейбус 3
+            823L,  TransportType.BUS,
+            1922L, TransportType.BUS,
+            842L,  TransportType.BUS,
+            863L,  TransportType.BUS,
+            1942L, TransportType.BUS,
+            1421L, TransportType.BUS
     );
 
     private final WebClient webClient;
@@ -65,9 +74,6 @@ public class TransportCvCollector {
         try {
             String reqDate = TransportCvSignature.buildReqDate();
             String sign    = TransportCvSignature.buildSign(reqDate, TransportCvSignature.USER_AGENT);
-
-            log.debug("TransportCvCollector -> Reqdate: [{}]", reqDate);
-            log.debug("TransportCvCollector -> Sign:    [{}]", sign);
 
             TransportCvResponseDto response = webClient
                     .mutate()
@@ -120,30 +126,23 @@ public class TransportCvCollector {
         }
     }
 
-    private static ExchangeFilterFunction forceUserAgent(String userAgent) {
-        return ExchangeFilterFunction.ofRequestProcessor(request -> {
-            ClientRequest modified = ClientRequest.from(request)
-                    .headers(h -> h.set(HttpHeaders.USER_AGENT, userAgent))
-                    .build();
-            return Mono.just(modified);
-        });
-    }
-
     private VehiclePositionDto toPositionDto(TransportCvVehicleDto dto) {
         String routeName = ROUTE_NAMES.get(dto.getRtsId());
 
         if (routeName == null) {
-            // Невідомий маршрут — логуємо щоб можна було додати у маппінг
-            log.info("TransportCvCollector: unknown rtsId={}, transportNumber={} — add to ROUTE_NAMES",
+            log.info("TransportCvCollector: unknown rtsId={}, transportNumber={} — add to ROUTE_NAMES and ROUTE_TYPES",
                     dto.getRtsId(), dto.getTransportNumber());
         }
+
+        // Визначаємо тип: з маппінгу або BUS за замовчуванням
+        TransportType type = ROUTE_TYPES.getOrDefault(dto.getRtsId(), TransportType.BUS);
 
         return VehiclePositionDto.builder()
                 .externalId(String.valueOf(dto.getId()))
                 .source(DataSource.transportcv)
                 .externalRouteId(String.valueOf(dto.getRtsId()))
-                .routeName(routeName)   // null якщо rtsId не в маппінгу
-                .type(TransportType.BUS)
+                .routeName(routeName)
+                .type(type)               // ← тепер правильний тип
                 .lat(dto.getLat())
                 .lng(dto.getLon())
                 .speed(dto.getSpeed() != null ? dto.getSpeed().floatValue() : 0f)
@@ -151,5 +150,14 @@ public class TransportCvCollector {
                 .busNumber(dto.getTransportNumber())
                 .online(true)
                 .build();
+    }
+
+    private static ExchangeFilterFunction forceUserAgent(String userAgent) {
+        return ExchangeFilterFunction.ofRequestProcessor(request -> {
+            ClientRequest modified = ClientRequest.from(request)
+                    .headers(h -> h.set(HttpHeaders.USER_AGENT, userAgent))
+                    .build();
+            return Mono.just(modified);
+        });
     }
 }

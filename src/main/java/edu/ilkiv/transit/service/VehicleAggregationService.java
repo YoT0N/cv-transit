@@ -9,14 +9,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
+import java.util.stream.Collectors;
 
-/**
- * Центральний сервіс агрегації.
- */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -29,9 +24,8 @@ public class VehicleAggregationService {
     private final VehicleBroadcastService broadcastService;
     private final VehicleService vehicleService;
 
-    // В VehicleAggregationService додай:
     private static final Map<DataSource, Integer> SOURCE_PRIORITY = Map.of(
-            DataSource.easyway,     1,  // найвищий пріоритет
+            DataSource.easyway,     1,
             DataSource.transgps,    2,
             DataSource.nimbus,      3,
             DataSource.transportcv, 4
@@ -39,31 +33,95 @@ public class VehicleAggregationService {
 
     @Transactional
     public void processPositions(List<VehiclePositionDto> positions) {
-        List<Vehicle> updated = new ArrayList<>();
+        if (positions.isEmpty()) return;
 
-        for (VehiclePositionDto dto : positions) {
+        // Всі позиції в одному батчі завжди від одного джерела
+        DataSource source = positions.get(0).getSource();
+
+        // ── Крок 1: дедублікація всередині батчу (по busNumber) ──────────────
+        List<VehiclePositionDto> deduplicated = deduplicateWithinBatch(positions);
+        log.debug("processPositions [{}]: {} after dedup (was {})",
+                source, deduplicated.size(), positions.size());
+
+        // ── Крок 2: зберігаємо оновлені засоби ───────────────────────────────
+        List<Vehicle> updated = new ArrayList<>();
+        Set<String> seenExternalIds = new HashSet<>();
+
+        for (VehiclePositionDto dto : deduplicated) {
             try {
                 Vehicle v = processOne(dto);
                 if (v != null) {
                     updated.add(v);
-                    log.debug("Processed vehicle externalId={} source={} route='{}'",
-                            dto.getExternalId(), dto.getSource(),
-                            v.getRoute() != null ? v.getRoute().getName() : "null");
+                    seenExternalIds.add(dto.getExternalId());
                 }
             } catch (Exception e) {
-                log.error("Failed to process vehicle externalId={} source={} routeName='{}': {}",
-                        dto.getExternalId(), dto.getSource(), dto.getRouteName(), e.getMessage(), e);
+                log.error("Failed to process vehicle externalId={} source={}: {}",
+                        dto.getExternalId(), source, e.getMessage(), e);
             }
         }
 
-        log.debug("processPositions: {}/{} vehicles saved successfully",
-                updated.size(), positions.size());
+        // ── Крок 3: позначаємо офлайн тих кого НЕ було в цьому батчі ─────────
+        // EasyWay і TransGPS надсилають ПОВНИЙ список активного транспорту.
+        // Якщо засіб був онлайн але не прийшов — він більше не активний.
+        markAbsentVehiclesOffline(source, seenExternalIds);
 
         if (!updated.isEmpty()) {
             broadcastService.broadcast(updated);
             vehicleService.evictCache();
         }
     }
+
+    /**
+     * Позначає як офлайн усі засоби від даного джерела,
+     * яких не було у поточному батчі.
+     *
+     * Важливо: MQTT (Nimbus) надсилає по одному повідомленню на засіб —
+     * там батч завжди містить 1 елемент, тому цю логіку для Nimbus
+     * НЕ застосовуємо (інакше всі інші Nimbus-засоби стали б офлайн).
+     */
+    private void markAbsentVehiclesOffline(DataSource source, Set<String> seenExternalIds) {
+        // Nimbus — push по одному, не знаємо повний список → пропускаємо
+        if (source == DataSource.nimbus) return;
+
+        List<Vehicle> nowOffline = vehicleRepository
+                .findBySourceAndIsOnlineTrue(source)
+                .stream()
+                .filter(v -> !seenExternalIds.contains(v.getExternalId()))
+                .toList();
+
+        if (nowOffline.isEmpty()) return;
+
+        nowOffline.forEach(v -> v.setIsOnline(false));
+        vehicleRepository.saveAll(nowOffline);
+
+        log.debug("markAbsentVehiclesOffline [{}]: {} vehicles set offline",
+                source, nowOffline.size());
+    }
+
+    // ── Дедублікація в межах батчу ────────────────────────────────────────────
+
+    private List<VehiclePositionDto> deduplicateWithinBatch(List<VehiclePositionDto> positions) {
+        Map<String, VehiclePositionDto> seen = new LinkedHashMap<>();
+        for (VehiclePositionDto dto : positions) {
+            String key = buildDeduplicationKey(dto);
+            seen.merge(key, dto, (existing, incoming) -> {
+                log.debug("Intra-batch dedup [{}]: dropping externalId={} (dup of {}) key={}",
+                        incoming.getSource(), incoming.getExternalId(),
+                        existing.getExternalId(), key);
+                return existing;
+            });
+        }
+        return new ArrayList<>(seen.values());
+    }
+
+    private String buildDeduplicationKey(VehiclePositionDto dto) {
+        if (dto.getBusNumber() != null && !dto.getBusNumber().isBlank()) {
+            return dto.getSource().name() + ":" + dto.getBusNumber();
+        }
+        return dto.getSource().name() + ":id:" + dto.getExternalId();
+    }
+
+    // ── Збереження одного засобу ──────────────────────────────────────────────
 
     private Vehicle processOne(VehiclePositionDto dto) {
         Route route = resolveRoute(dto);
@@ -82,27 +140,24 @@ public class VehicleAggregationService {
         vehicle.setBearing(dto.getBearing());
         vehicle.setIsOnline(Boolean.TRUE.equals(dto.getOnline()));
         vehicle.setLastSeen(OffsetDateTime.now());
-        if (dto.getBusNumber() != null) {
-            vehicle.setBusNumber(dto.getBusNumber());
-        }
+        if (dto.getBusNumber() != null) vehicle.setBusNumber(dto.getBusNumber());
+
         vehicleRepository.save(vehicle);
 
-        // Дедублікація: якщо поруч є той самий маршрут з іншого джерела —
-        // ховаємо те що має нижчий пріоритет
-        if (route != null) {
-            deduplicateNearby(vehicle, route, dto.getSource());
-        }
+        if (route != null) deduplicateNearby(vehicle, route, dto.getSource());
 
-        GpsHistory history = GpsHistory.builder()
+        gpsHistoryRepository.save(GpsHistory.builder()
                 .vehicle(vehicle)
                 .lat(dto.getLat())
                 .lng(dto.getLng())
                 .speed(dto.getSpeed())
                 .source(dto.getSource())
-                .build();
-        gpsHistoryRepository.save(history);
+                .build());
+
         return vehicle;
     }
+
+    // ── Дедублікація між джерелами ────────────────────────────────────────────
 
     private void deduplicateNearby(Vehicle current, Route route, DataSource currentSource) {
         int currentPriority = SOURCE_PRIORITY.getOrDefault(currentSource, 99);
@@ -112,67 +167,48 @@ public class VehicleAggregationService {
 
         for (Vehicle other : nearby) {
             int otherPriority = SOURCE_PRIORITY.getOrDefault(other.getSource(), 99);
-
             if (currentPriority < otherPriority) {
-                // Поточне джерело краще — ховаємо дублікат
                 if (other.getIsOnline()) {
                     other.setIsOnline(false);
                     vehicleRepository.save(other);
-                    log.debug("Dedup: hiding vehicle {} ({}) — duplicate of {} ({}) within 100m on route {}",
-                            other.getId(), other.getSource(),
-                            current.getId(), currentSource,
-                            route.getName());
                 }
             } else {
-                // Інше джерело краще — ховаємо поточне
                 current.setIsOnline(false);
                 vehicleRepository.save(current);
-                log.debug("Dedup: hiding vehicle {} ({}) — duplicate of {} ({}) within 100m on route {}",
-                        current.getId(), currentSource,
-                        other.getId(), other.getSource(),
-                        route.getName());
             }
         }
     }
 
-    private Route resolveRoute(VehiclePositionDto dto) {
-        if (dto.getExternalRouteId() == null && dto.getRouteName() == null) {
-            log.debug("resolveRoute: no routeId/routeName for externalId={}, returning null",
-                    dto.getExternalId());
-            return null;
-        }
+    // ── Резолюція маршруту ────────────────────────────────────────────────────
 
-        // Крок 1: шукаємо існуючий маппінг
+    private Route resolveRoute(VehiclePositionDto dto) {
+        if (dto.getExternalRouteId() == null && dto.getRouteName() == null) return null;
+
+        TransportType type = dto.getType() != null ? dto.getType() : TransportType.BUS;
+
+        // ── Крок 1: шукаємо існуючий source_mapping ──────────────────────────
         if (dto.getExternalRouteId() != null) {
             Optional<SourceMapping> mapping = sourceMappingRepository
                     .findByEntityTypeAndSourceAndSourceId(
-                            "route",
-                            dto.getSource().name(),
-                            dto.getExternalRouteId());
-
+                            "route", dto.getSource().name(), dto.getExternalRouteId());
             if (mapping.isPresent()) {
-                Route found = routeRepository.findById(mapping.get().getCanonicalId()).orElse(null);
-                log.debug("resolveRoute: found via mapping externalRouteId={} → route='{}'",
-                        dto.getExternalRouteId(), found != null ? found.getName() : "null");
-                return found;
+                return routeRepository.findById(mapping.get().getCanonicalId()).orElse(null);
             }
         }
 
-        // Крок 2: шукаємо за назвою маршруту
+        // ── Крок 2: шукаємо по (name, type) — обидва поля обов'язкові ────────
+        // НЕ робимо fallback тільки по name — це змішує маршрути з однаковою
+        // назвою але різним типом (наприклад автобус "3" і тролейбус "3").
         Route route = null;
         if (dto.getRouteName() != null) {
-            TransportType type = dto.getType() != null ? dto.getType() : TransportType.BUS;
             route = routeRepository.findByNameAndType(dto.getRouteName(), type).orElse(null);
-            if (route == null) {
-                route = routeRepository.findByName(dto.getRouteName())
-                        .filter(r -> r.getType() == type || dto.getType() == null)
-                        .orElse(null);
-            }
+
             log.debug("resolveRoute: lookup by name='{}' type='{}' → {}",
-                    dto.getRouteName(), type, route != null ? "found id=" + route.getId() : "not found");
+                    dto.getRouteName(), type,
+                    route != null ? "found id=" + route.getId() : "not found");
         }
 
-        // Крок 3: створюємо новий маршрут
+        // ── Крок 3: створюємо якщо не знайшли ────────────────────────────────
         if (route == null) {
             String name = dto.getRouteName() != null
                     ? dto.getRouteName()
@@ -180,15 +216,16 @@ public class VehicleAggregationService {
 
             route = routeRepository.save(Route.builder()
                     .name(name)
-                    .type(dto.getType() != null ? dto.getType() : TransportType.BUS)
+                    .type(type)
                     .color(dto.getColor())
                     .isActive(true)
                     .build());
-            log.info("resolveRoute: created new route '{}' (source={}, externalRouteId={})",
-                    route.getName(), dto.getSource(), dto.getExternalRouteId());
+
+            log.info("resolveRoute: created route '{}' type={} (source={}, externalRouteId={})",
+                    route.getName(), type, dto.getSource(), dto.getExternalRouteId());
         }
 
-        // Крок 4: зберігаємо маппінг
+        // ── Крок 4: зберігаємо маппінг для наступних запитів ─────────────────
         if (dto.getExternalRouteId() != null) {
             try {
                 sourceMappingRepository.save(SourceMapping.builder()
@@ -198,7 +235,6 @@ public class VehicleAggregationService {
                         .sourceId(dto.getExternalRouteId())
                         .build());
             } catch (Exception e) {
-                // вже існує — ігноруємо duplicate key
                 log.debug("resolveRoute: mapping already exists for source={} routeId={}",
                         dto.getSource(), dto.getExternalRouteId());
             }
