@@ -40,6 +40,7 @@ public class TransportCvCollector {
      * Додавати нові: знайти rtsId в логах ("unknown rtsId=XXXX") і додати рядок.
      */
     private static final Map<Long, String> ROUTE_NAMES = Map.of(
+            402L, "2",
             2042L, "11",
             121L,  "3",
             823L,  "21",
@@ -55,8 +56,9 @@ public class TransportCvCollector {
      * Якщо rtsId відсутній тут — використовується BUS як дефолт.
      */
     private static final Map<Long, TransportType> ROUTE_TYPES = Map.of(
+            402L, TransportType.TROLL,
             2042L, TransportType.TROLL,  // тролейбус 11
-            121L,  TransportType.BUS,  // тролейбус 3
+            121L,  TransportType.BUS,
             823L,  TransportType.BUS,
             1922L, TransportType.BUS,
             842L,  TransportType.BUS,
