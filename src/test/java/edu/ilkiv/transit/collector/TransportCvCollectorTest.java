@@ -1,6 +1,5 @@
 package edu.ilkiv.transit.collector;
 
-import edu.ilkiv.transit.dto.TransportCvResponseDto;
 import edu.ilkiv.transit.dto.TransportCvVehicleDto;
 import edu.ilkiv.transit.dto.VehiclePositionDto;
 import edu.ilkiv.transit.model.DataSource;
@@ -14,225 +13,259 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.reactive.function.client.WebClient;
-import reactor.core.publisher.Mono;
 
 import java.lang.reflect.Method;
-import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
-import static org.mockito.Mockito.*;
 
+/**
+ * Об'єднані тести для TransportCvCollector.
+ * Всі тести через reflection приватного методу toPositionDto —
+ * collect() не тестується через складний WebClient fluent chain.
+ */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("TransportCvCollector — unit tests")
 class TransportCvCollectorTest {
 
-    @Mock
-    private VehicleAggregationService aggregationService;
+    @Mock VehicleAggregationService aggregationService;
+    @Mock WebClient webClient;
 
-    @Mock
-    private WebClient webClient;
-
-    @Mock
-    private WebClient.RequestBodyUriSpec requestBodyUriSpec;
-
-    @Mock
-    private WebClient.RequestHeadersSpec requestHeadersSpec;
-
-    @Mock
-    private WebClient.ResponseSpec responseSpec;
-
-    private TransportCvCollector collector;
+    TransportCvCollector collector;
 
     @BeforeEach
     void setUp() {
-        // Створюємо collector з WebClient (не Builder)
         collector = new TransportCvCollector(webClient, aggregationService);
     }
 
+    // ── ROUTE_NAMES маппінг ───────────────────────────────────────────────────
+
     @Nested
-    @DisplayName("toPositionDto — маппінг полів (через reflection)")
-    class ToPositionDtoTests {
+    @DisplayName("ROUTE_NAMES — маппінг rtsId на назву маршруту")
+    class RouteNamesMappingTests {
 
         @Test
-        @DisplayName("Відомі rtsId правильно мапляться на routeName")
-        void toPositionDto_knownRtsId_mapsRouteName() throws Exception {
-            TransportCvVehicleDto dto = createVehicleDto(121L, "5453", 48.27547, 25.92966, 30, 45);
-
-            VehiclePositionDto result = invokeToPositionDto(dto);
-
-            assertThat(result.getRouteName()).isEqualTo("3");
-            assertThat(result.getExternalRouteId()).isEqualTo("121");
+        @DisplayName("rtsId=121 → маршрут '3'")
+        void rtsId121_route3() throws Exception {
+            assertThat(invokeToPositionDto(createDto(121L)).getRouteName()).isEqualTo("3");
         }
 
         @Test
-        @DisplayName("Невідомий rtsId — routeName = null")
-        void toPositionDto_unknownRtsId_routeNameNull() throws Exception {
-            TransportCvVehicleDto dto = createVehicleDto(99999L, "5453", 48.27547, 25.92966, 30, 45);
-
-            VehiclePositionDto result = invokeToPositionDto(dto);
-
-            assertThat(result.getRouteName()).isNull();
-            assertThat(result.getExternalRouteId()).isEqualTo("99999");
+        @DisplayName("rtsId=823 → маршрут '21'")
+        void rtsId823_route21() throws Exception {
+            assertThat(invokeToPositionDto(createDto(823L)).getRouteName()).isEqualTo("21");
         }
 
         @Test
-        @DisplayName("Координати правильно копіюються (lat, lon)")
-        void toPositionDto_coordinates_copiedCorrectly() throws Exception {
-            TransportCvVehicleDto dto = createVehicleDto(121L, "5453", 48.27547, 25.92966, 30, 45);
+        @DisplayName("rtsId=1922 → маршрут '26'")
+        void rtsId1922_route26() throws Exception {
+            assertThat(invokeToPositionDto(createDto(1922L)).getRouteName()).isEqualTo("26");
+        }
 
+        @Test
+        @DisplayName("rtsId=842 → маршрут '33'")
+        void rtsId842_route33() throws Exception {
+            assertThat(invokeToPositionDto(createDto(842L)).getRouteName()).isEqualTo("33");
+        }
+
+        @Test
+        @DisplayName("rtsId=863 → маршрут '36'")
+        void rtsId863_route36() throws Exception {
+            assertThat(invokeToPositionDto(createDto(863L)).getRouteName()).isEqualTo("36");
+        }
+
+        @Test
+        @DisplayName("rtsId=1942 → маршрут '37'")
+        void rtsId1942_route37() throws Exception {
+            assertThat(invokeToPositionDto(createDto(1942L)).getRouteName()).isEqualTo("37");
+        }
+
+        @Test
+        @DisplayName("rtsId=1421 → маршрут '43'")
+        void rtsId1421_route43() throws Exception {
+            assertThat(invokeToPositionDto(createDto(1421L)).getRouteName()).isEqualTo("43");
+        }
+
+        @Test
+        @DisplayName("rtsId=2042 → маршрут '11'")
+        void rtsId2042_route11() throws Exception {
+            assertThat(invokeToPositionDto(createDto(2042L)).getRouteName()).isEqualTo("11");
+        }
+
+        @Test
+        @DisplayName("rtsId=402 → маршрут '2'")
+        void rtsId402_route2() throws Exception {
+            assertThat(invokeToPositionDto(createDto(402L)).getRouteName()).isEqualTo("2");
+        }
+
+        @Test
+        @DisplayName("Невідомий rtsId → routeName null")
+        void unknownRtsId_routeNameNull() throws Exception {
+            assertThat(invokeToPositionDto(createDto(99999L)).getRouteName()).isNull();
+        }
+
+        @Test
+        @DisplayName("externalRouteId = rtsId як рядок")
+        void externalRouteId_isRtsIdAsString() throws Exception {
+            assertThat(invokeToPositionDto(createDto(863L)).getExternalRouteId())
+                    .isEqualTo("863");
+        }
+    }
+
+    // ── ROUTE_TYPES маппінг ───────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("ROUTE_TYPES — маппінг rtsId на тип транспорту")
+    class RouteTypesMappingTests {
+
+        @Test
+        @DisplayName("rtsId=2042 (тролейбус 11) → тип TROLL")
+        void rtsId2042_typeTroll() throws Exception {
+            assertThat(invokeToPositionDto(createDto(2042L)).getType())
+                    .isEqualTo(TransportType.TROLL);
+        }
+
+        @Test
+        @DisplayName("rtsId=402 (тролейбус 2) → тип TROLL")
+        void rtsId402_typeTroll() throws Exception {
+            assertThat(invokeToPositionDto(createDto(402L)).getType())
+                    .isEqualTo(TransportType.TROLL);
+        }
+
+        @Test
+        @DisplayName("rtsId=121 → тип BUS")
+        void rtsId121_typeBus() throws Exception {
+            assertThat(invokeToPositionDto(createDto(121L)).getType())
+                    .isEqualTo(TransportType.BUS);
+        }
+
+        @Test
+        @DisplayName("rtsId=823 → тип BUS")
+        void rtsId823_typeBus() throws Exception {
+            assertThat(invokeToPositionDto(createDto(823L)).getType())
+                    .isEqualTo(TransportType.BUS);
+        }
+
+        @Test
+        @DisplayName("Невідомий rtsId → тип BUS за замовчуванням")
+        void unknownRtsId_defaultBus() throws Exception {
+            assertThat(invokeToPositionDto(createDto(88888L)).getType())
+                    .isEqualTo(TransportType.BUS);
+        }
+    }
+
+    // ── Поля DTO ──────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("toPositionDto — маппінг полів DTO")
+    class DtoFieldMappingTests {
+
+        @Test
+        @DisplayName("source завжди DataSource.transportcv")
+        void source_alwaysTransportcv() throws Exception {
+            assertThat(invokeToPositionDto(createDto(121L)).getSource())
+                    .isEqualTo(DataSource.transportcv);
+        }
+
+        @Test
+        @DisplayName("online завжди true")
+        void online_alwaysTrue() throws Exception {
+            assertThat(invokeToPositionDto(createDto(121L)).getOnline()).isTrue();
+        }
+
+        @Test
+        @DisplayName("externalId = String.valueOf(dto.getId())")
+        void externalId_mapsFromId() throws Exception {
+            TransportCvVehicleDto dto = createDto(121L);
+            dto.setId(12345L);
+            assertThat(invokeToPositionDto(dto).getExternalId()).isEqualTo("12345");
+        }
+
+        @Test
+        @DisplayName("busNumber = transportNumber")
+        void busNumber_mapsFromTransportNumber() throws Exception {
+            TransportCvVehicleDto dto = createDto(121L);
+            dto.setTransportNumber("5453");
+            assertThat(invokeToPositionDto(dto).getBusNumber()).isEqualTo("5453");
+        }
+
+        @Test
+        @DisplayName("lat і lng (lon) копіюються правильно")
+        void coordinates_copiedCorrectly() throws Exception {
+            TransportCvVehicleDto dto = createDto(121L);
+            dto.setLat(48.27547);
+            dto.setLon(25.92966);
             VehiclePositionDto result = invokeToPositionDto(dto);
-
             assertThat(result.getLat()).isEqualTo(48.27547);
             assertThat(result.getLng()).isEqualTo(25.92966);
         }
 
         @Test
-        @DisplayName("speed і bearing правильно конвертуються в Float")
-        void toPositionDto_speedAndBearing_convertedToFloat() throws Exception {
-            TransportCvVehicleDto dto = createVehicleDto(121L, "5453", 48.27547, 25.92966, 42, 180);
-
-            VehiclePositionDto result = invokeToPositionDto(dto);
-
-            assertThat(result.getSpeed()).isEqualTo(42.0f);
-            assertThat(result.getBearing()).isEqualTo(180.0f);
+        @DisplayName("speed конвертується з Integer у Float")
+        void speed_convertedToFloat() throws Exception {
+            TransportCvVehicleDto dto = createDto(121L);
+            dto.setSpeed(42);
+            assertThat(invokeToPositionDto(dto).getSpeed()).isEqualTo(42.0f);
         }
 
         @Test
-        @DisplayName("null speed і bearing → 0f")
-        void toPositionDto_nullSpeedAndBearing_defaultZero() throws Exception {
-            TransportCvVehicleDto dto = createVehicleDto(121L, "5453", 48.27547, 25.92966, null, null);
-
-            VehiclePositionDto result = invokeToPositionDto(dto);
-
-            assertThat(result.getSpeed()).isEqualTo(0f);
-            assertThat(result.getBearing()).isEqualTo(0f);
+        @DisplayName("angle конвертується у bearing як Float")
+        void bearing_convertedFromAngle() throws Exception {
+            TransportCvVehicleDto dto = createDto(121L);
+            dto.setAngle(180);
+            assertThat(invokeToPositionDto(dto).getBearing()).isEqualTo(180.0f);
         }
 
         @Test
-        @DisplayName("externalId = id транспортного засобу")
-        void toPositionDto_externalId_mapsCorrectly() throws Exception {
-            TransportCvVehicleDto dto = createVehicleDto(121L, "5453", 48.27547, 25.92966, 30, 45);
-            dto.setId(12345L);
-
-            VehiclePositionDto result = invokeToPositionDto(dto);
-
-            assertThat(result.getExternalId()).isEqualTo("12345");
+        @DisplayName("null speed → 0f")
+        void nullSpeed_defaultZero() throws Exception {
+            TransportCvVehicleDto dto = createDto(121L);
+            dto.setSpeed(null);
+            assertThat(invokeToPositionDto(dto).getSpeed()).isEqualTo(0f);
         }
 
         @Test
-        @DisplayName("busNumber = transportNumber")
-        void toPositionDto_busNumber_mapsCorrectly() throws Exception {
-            TransportCvVehicleDto dto = createVehicleDto(121L, "5453", 48.27547, 25.92966, 30, 45);
-
-            VehiclePositionDto result = invokeToPositionDto(dto);
-
-            assertThat(result.getBusNumber()).isEqualTo("5453");
+        @DisplayName("null angle → 0f")
+        void nullAngle_defaultZero() throws Exception {
+            TransportCvVehicleDto dto = createDto(121L);
+            dto.setAngle(null);
+            assertThat(invokeToPositionDto(dto).getBearing()).isEqualTo(0f);
         }
 
         @Test
-        @DisplayName("Тип завжди BUS")
-        void toPositionDto_type_alwaysBus() throws Exception {
-            TransportCvVehicleDto dto = createVehicleDto(121L, "5453", 48.27547, 25.92966, 30, 45);
-
-            VehiclePositionDto result = invokeToPositionDto(dto);
-
-            assertThat(result.getType()).isEqualTo(TransportType.BUS);
+        @DisplayName("speed=0 → 0f (не null)")
+        void zeroSpeed_returnsZero() throws Exception {
+            TransportCvVehicleDto dto = createDto(121L);
+            dto.setSpeed(0);
+            assertThat(invokeToPositionDto(dto).getSpeed()).isEqualTo(0f);
         }
 
         @Test
-        @DisplayName("Source = transportcv")
-        void toPositionDto_source_transportcv() throws Exception {
-            TransportCvVehicleDto dto = createVehicleDto(121L, "5453", 48.27547, 25.92966, 30, 45);
-
-            VehiclePositionDto result = invokeToPositionDto(dto);
-
-            assertThat(result.getSource()).isEqualTo(DataSource.transportcv);
-        }
-
-        @Test
-        @DisplayName("online завжди true")
-        void toPositionDto_online_alwaysTrue() throws Exception {
-            TransportCvVehicleDto dto = createVehicleDto(121L, "5453", 48.27547, 25.92966, 30, 45);
-
-            VehiclePositionDto result = invokeToPositionDto(dto);
-
-            assertThat(result.getOnline()).isTrue();
+        @DisplayName("angle=360 → 360f")
+        void maxAngle_correct() throws Exception {
+            TransportCvVehicleDto dto = createDto(121L);
+            dto.setAngle(360);
+            assertThat(invokeToPositionDto(dto).getBearing()).isEqualTo(360f);
         }
     }
 
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
-    @Nested
-    @DisplayName("ROUTE_NAMES маппінг")
-    class RouteMappingTests {
-
-        @Test
-        @DisplayName("Всі відомі маршрути правильно мапляться")
-        void allKnownRoutes_mappedCorrectly() throws Exception {
-            Long[] knownRouteIds = {121L, 823L, 1922L, 842L, 863L, 1942L, 1421L};
-            String[] expectedNames = {"3", "21", "26", "33", "36", "37", "43"};
-
-            for (int i = 0; i < knownRouteIds.length; i++) {
-                TransportCvVehicleDto dto = createVehicleDto(knownRouteIds[i], "5453", 48.27547, 25.92966, 30, 45);
-                VehiclePositionDto result = invokeToPositionDto(dto);
-                assertThat(result.getRouteName()).isEqualTo(expectedNames[i]);
-            }
-        }
-
-        @Test
-        @DisplayName("Невідомий маршрут не має назви")
-        void unknownRoute_noMapping() throws Exception {
-            TransportCvVehicleDto dto = createVehicleDto(99999L, "5453", 48.27547, 25.92966, 30, 45);
-            VehiclePositionDto result = invokeToPositionDto(dto);
-            assertThat(result.getRouteName()).isNull();
-        }
-    }
-
-    // ── Допоміжні методи ──────────────────────────────────────────────────────
-
-    /**
-     * Створює тестовий TransportCvVehicleDto
-     */
-    private TransportCvVehicleDto createVehicleDto(Long rtsId, String transportNumber,
-                                                   Double lat, Double lon,
-                                                   Integer speed, Integer angle) {
+    private TransportCvVehicleDto createDto(Long rtsId) {
         TransportCvVehicleDto dto = new TransportCvVehicleDto();
-        dto.setId(12345L);
+        dto.setId(1L);
         dto.setRtsId(rtsId);
-        dto.setTransportNumber(transportNumber);
-        dto.setLat(lat);
-        dto.setLon(lon);
-        dto.setSpeed(speed);
-        dto.setAngle(angle);
-        dto.setDatetime("2026-05-13T19:48:50Z");
-        dto.setStatusName("move");
+        dto.setTransportNumber("5453");
+        dto.setLat(48.29);
+        dto.setLon(25.93);
+        dto.setSpeed(30);
+        dto.setAngle(90);
         return dto;
     }
 
-    /**
-     * Створює TransportCvResponseDto з масивом транспортів
-     */
-    private TransportCvResponseDto createResponse(TransportCvVehicleDto... vehicles) {
-        TransportCvResponseDto response = new TransportCvResponseDto();
-        response.setTransports(List.of(vehicles));
-        return response;
-    }
-
-    /**
-     * Викликає приватний метод toPositionDto через reflection
-     */
     private VehiclePositionDto invokeToPositionDto(TransportCvVehicleDto dto) throws Exception {
-        Method method = TransportCvCollector.class.getDeclaredMethod("toPositionDto", TransportCvVehicleDto.class);
+        Method method = TransportCvCollector.class
+                .getDeclaredMethod("toPositionDto", TransportCvVehicleDto.class);
         method.setAccessible(true);
         return (VehiclePositionDto) method.invoke(collector, dto);
-    }
-
-    /**
-     * Викликає приватний метод для отримання позицій з response
-     */
-    @SuppressWarnings("unchecked")
-    private List<VehiclePositionDto> invokeExtractPositions(TransportCvResponseDto response) throws Exception {
-        Method method = TransportCvCollector.class.getDeclaredMethod("extractPositions", TransportCvResponseDto.class);
-        method.setAccessible(true);
-        return (List<VehiclePositionDto>) method.invoke(collector, response);
     }
 }

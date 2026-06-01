@@ -24,16 +24,6 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-/**
- * Тести для EasyWayCollector.
- *
- * Оскільки клас підключається до зовнішнього WebSocket у @PostConstruct,
- * ми тестуємо тільки внутрішню логіку через reflection:
- *   - AES розшифрування
- *   - Protobuf парсинг (processMessage)
- *   - Витяг бортового номера (extractBusNumber)
- *   - Фільтрацію невалідних координат
- */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("EasyWayCollector — unit tests")
 class EasyWayCollectorTest {
@@ -44,16 +34,14 @@ class EasyWayCollectorTest {
     @Mock
     VehicleAggregationService aggregationService;
 
-    // Не використовуємо @InjectMocks щоб уникнути @PostConstruct (WebSocket connect)
     EasyWayCollector collector;
 
     @BeforeEach
-    void setUp() throws Exception {
-        // Створюємо екземпляр без виклику @PostConstruct
+    void setUp() {
         collector = new EasyWayCollector(aggregationService);
     }
 
-    // ── AES розшифрування ─────────────────────────────────────────────────────
+    // ── AES decrypt ───────────────────────────────────────────────────────────
 
     @Nested
     @DisplayName("AES decrypt")
@@ -62,25 +50,52 @@ class EasyWayCollectorTest {
         @Test
         @DisplayName("Коректно розшифровує AES-128-CBC дані")
         void aesDecrypt_validData_returnsPlaintext() throws Exception {
-            byte[] original = "Hello, EasyWay!".getBytes(StandardCharsets.UTF_8);
-            byte[] encrypted = EasyWayCollectorTest.aesEncrypt(original);
-
-            byte[] result = EasyWayCollectorTest.invokeAesDecrypt(encrypted);
-
+            byte[] original  = "Hello, EasyWay!".getBytes(StandardCharsets.UTF_8);
+            byte[] encrypted = aesEncrypt(original);
+            byte[] result    = invokeAesDecrypt(encrypted);
             assertThat(result).startsWith(original);
         }
 
         @Test
-        @DisplayName("Base64 → AES decrypt pipeline повертає оригінальні байти")
+        @DisplayName("Base64 → AES decrypt pipeline — round trip")
         void aesDecrypt_base64Pipeline_roundTrip() throws Exception {
-            byte[] original = new byte[]{0x08, 0x01, 0x12, 0x04, 0x08, 0x05}; // мінімальний protobuf
-            byte[] encrypted = EasyWayCollectorTest.aesEncrypt(original);
-            String base64 = Base64.getEncoder().encodeToString(encrypted);
-
-            byte[] decoded = Base64.getDecoder().decode(base64);
-            byte[] decrypted = EasyWayCollectorTest.invokeAesDecrypt(decoded);
-
+            byte[] original  = new byte[]{0x08, 0x01, 0x12, 0x04, 0x08, 0x05};
+            byte[] encrypted = aesEncrypt(original);
+            String base64    = Base64.getEncoder().encodeToString(encrypted);
+            byte[] decrypted = invokeAesDecrypt(Base64.getDecoder().decode(base64));
             assertThat(decrypted).startsWith(original);
+        }
+
+        @Test
+        @DisplayName("Невалідні байти — кидає exception")
+        void aesDecrypt_invalidData_throwsException() {
+            byte[] garbage = new byte[]{0x01, 0x02, 0x03, 0x04};
+            assertThatThrownBy(() -> invokeAesDecrypt(garbage))
+                    .isInstanceOf(Exception.class);
+        }
+    }
+
+    // ── tryDecrypt ────────────────────────────────────────────────────────────
+
+    @Nested
+    @DisplayName("tryDecrypt")
+    class TryDecryptTests {
+
+        @Test
+        @DisplayName("Валідні зашифровані дані — повертає розшифровані")
+        void tryDecrypt_validEncrypted_returnsDecrypted() throws Exception {
+            byte[] original  = "test data".getBytes(StandardCharsets.UTF_8);
+            byte[] encrypted = aesEncrypt(original);
+            byte[] result    = invokeTryDecrypt(encrypted);
+            assertThat(result).startsWith(original);
+        }
+
+        @Test
+        @DisplayName("Невалідні байти — повертає оригінал без exception")
+        void tryDecrypt_invalidData_returnsOriginal() throws Exception {
+            byte[] garbage = new byte[]{0x01, 0x02, 0x03};
+            byte[] result  = invokeTryDecrypt(garbage);
+            assertThat(result).isEqualTo(garbage);
         }
     }
 
@@ -91,103 +106,208 @@ class EasyWayCollectorTest {
     class ExtractBusNumberTests {
 
         @Test
-        @DisplayName("Формат '075(6351)' → '6351'")
-        void extract_standardFormat_returnsBusNumber() throws Exception {
-            assertThat(EasyWayCollectorTest.invokeExtractBusNumber("075(6351)")).isEqualTo("6351");
+        @DisplayName("'075(6351)' → '6351'")
+        void standardFormat() throws Exception {
+            assertThat(invokeExtractBusNumber("075(6351)")).isEqualTo("6351");
         }
 
         @Test
-        @DisplayName("Формат '001(0042)' → '0042'")
-        void extract_leadingZeros_preservedCorrectly() throws Exception {
-            assertThat(EasyWayCollectorTest.invokeExtractBusNumber("001(0042)")).isEqualTo("0042");
+        @DisplayName("'001(0042)' → '0042' (провідні нулі збережені)")
+        void leadingZeros() throws Exception {
+            assertThat(invokeExtractBusNumber("001(0042)")).isEqualTo("0042");
         }
 
         @Test
-        @DisplayName("Рядок без дужок повертається як є")
-        void extract_noBrackets_returnsOriginal() throws Exception {
-            assertThat(EasyWayCollectorTest.invokeExtractBusNumber("12345")).isEqualTo("12345");
+        @DisplayName("Без дужок — повертає рядок як є")
+        void noBrackets() throws Exception {
+            assertThat(invokeExtractBusNumber("12345")).isEqualTo("12345");
         }
 
         @Test
         @DisplayName("null → null")
-        void extract_null_returnsNull() throws Exception {
-            assertThat(EasyWayCollectorTest.invokeExtractBusNumber(null)).isNull();
+        void nullInput() throws Exception {
+            assertThat(invokeExtractBusNumber(null)).isNull();
         }
 
         @Test
-        @DisplayName("Порожній рядок повертається як є")
-        void extract_emptyString_returnsEmpty() throws Exception {
-            assertThat(EasyWayCollectorTest.invokeExtractBusNumber("")).isEqualTo("");
+        @DisplayName("Порожній рядок → ''")
+        void emptyString() throws Exception {
+            assertThat(invokeExtractBusNumber("")).isEqualTo("");
         }
 
         @Test
-        @DisplayName("Тільки дужки '()' → ''")
-        void extract_emptyBrackets_returnsEmpty() throws Exception {
-            assertThat(EasyWayCollectorTest.invokeExtractBusNumber("()")).isEqualTo("");
+        @DisplayName("'()' → ''")
+        void emptyBrackets() throws Exception {
+            assertThat(invokeExtractBusNumber("()")).isEqualTo("");
         }
-    }
-
-    // ── processMessage — фільтрація координат ─────────────────────────────────
-
-    @Nested
-    @DisplayName("processMessage — coordinate validation")
-    class CoordinateValidationTests {
 
         @Test
-        @DisplayName("Нульові координати (0,0) — vehicle не передається в aggregation")
-        void processMessage_zeroCoordinates_notAggregated() throws Exception {
-            // Мінімальний protobuf з нульовими координатами
-            byte[] msg = buildMinimalProtobuf(0, 0);
-            EasyWayCollectorTest.invokeProcessMessage(collector, msg);
-
-            verifyNoInteractions(aggregationService);
+        @DisplayName("Тільки відкрита дужка — повертає як є")
+        void onlyOpenBracket() throws Exception {
+            assertThat(invokeExtractBusNumber("123(456")).isEqualTo("123(456");
         }
     }
 
-    // ── processMessage — маппінг маршрутів ────────────────────────────────────
+    // ── processMessage — базова фільтрація ────────────────────────────────────
 
     @Nested
-    @DisplayName("processMessage — route mapping")
-    class RouteMappingTests {
+    @DisplayName("processMessage — фільтрація")
+    class ProcessMessageFilterTests {
 
         @Test
-        @DisplayName("Невідомий routeId — vehicle не передається")
-        void processMessage_unknownRouteId_notAggregated() throws Exception {
-            byte[] msg = EasyWayCollectorTest.buildProtobufWithVehicle(
-                    999, 999 /* не існує в ROUTE_NAMES */,
-                    48_275_470L, 25_929_660L, "999(9999)"
-            );
-            EasyWayCollectorTest.invokeProcessMessage(collector, msg);
-
-            verifyNoInteractions(aggregationService);
-        }
-    }
-
-    // ── processMessage — поля DTO ─────────────────────────────────────────────
-
-    @Nested
-    @DisplayName("processMessage — DTO fields")
-    class DtoFieldsTests {
-
-        @Test
-        @DisplayName("Порожній масив байтів — нічого не передається")
-        void processMessage_emptyBytes_noAggregation() throws Exception {
-            EasyWayCollectorTest.invokeProcessMessage(collector, new byte[0]);
+        @DisplayName("Порожній масив — нічого не передається")
+        void emptyBytes_noAggregation() throws Exception {
+            invokeProcessMessage(collector, new byte[0]);
             verifyNoInteractions(aggregationService);
         }
 
         @Test
         @DisplayName("Один байт — нічого не передається")
-        void processMessage_singleByte_noAggregation() throws Exception {
-            EasyWayCollectorTest.invokeProcessMessage(collector, new byte[]{0x00});
+        void singleByte_noAggregation() throws Exception {
+            invokeProcessMessage(collector, new byte[]{0x00});
+            verifyNoInteractions(aggregationService);
+        }
+
+        @Test
+        @DisplayName("Нульові координати (0,0) — vehicle не передається")
+        void zeroCoordinates_notAggregated() throws Exception {
+            invokeProcessMessage(collector, new byte[]{0x08, 0x00});
+            verifyNoInteractions(aggregationService);
+        }
+
+        @Test
+        @DisplayName("Невідомий routeId — vehicle не передається")
+        void unknownRouteId_notAggregated() throws Exception {
+            byte[] msg = buildProtobufWithVehicle(
+                    999, 999, 48_275_470L, 25_929_660L, "999(9999)");
+            invokeProcessMessage(collector, msg);
+            verifyNoInteractions(aggregationService);
+        }
+
+        @Test
+        @DisplayName("Координати за межами Чернівців (lat < 47.5) — не передаються")
+        void latTooSmall_notAggregated() throws Exception {
+            // lat = 46.0 — нижче мінімуму 47.5
+            byte[] msg = buildProtobufWithVehicle(
+                    100, 1, 46_000_000L, 25_929_660L, "001(1111)");
+            invokeProcessMessage(collector, msg);
+            verifyNoInteractions(aggregationService);
+        }
+
+        @Test
+        @DisplayName("Координати за межами Чернівців (lng > 27.0) — не передаються")
+        void lngTooLarge_notAggregated() throws Exception {
+            // lng = 28.0 — вище максимуму 27.0
+            byte[] msg = buildProtobufWithVehicle(
+                    100, 1, 48_275_470L, 28_000_000L, "001(1111)");
+            invokeProcessMessage(collector, msg);
             verifyNoInteractions(aggregationService);
         }
     }
 
-    // ── Допоміжні методи ──────────────────────────────────────────────────────
+    // ── processMessage — валідний vehicle ─────────────────────────────────────
 
-    /** Викликає приватний метод aesDecrypt через reflection */
-    private static byte[] invokeAesDecrypt(byte[] data) throws Exception {
+    @Nested
+    @DisplayName("processMessage — валідний vehicle")
+    class ProcessMessageValidTests {
+
+        @Test
+        @DisplayName("Відомий routeId=1 (тролейбус 1) — vehicle передається")
+        void knownTrollRoute_aggregated() throws Exception {
+            // routeId=1 → TROLL "1", vehicleId=42
+            // lat=48.275470, lng=25.929660
+            byte[] msg = buildProtobufWithVehicle(
+                    42, 1, 48_275_470L, 25_929_660L, "001(4242)");
+            invokeProcessMessage(collector, msg);
+
+            ArgumentCaptor<List<VehiclePositionDto>> captor =
+                    ArgumentCaptor.forClass(List.class);
+            verify(aggregationService).processPositions(captor.capture());
+
+            VehiclePositionDto dto = captor.getValue().get(0);
+            assertThat(dto.getSource()).isEqualTo(DataSource.easyway);
+            assertThat(dto.getType()).isEqualTo(TransportType.TROLL);
+            assertThat(dto.getRouteName()).isEqualTo("1");
+            assertThat(dto.getLat()).isCloseTo(48.27547, within(0.0001));
+            assertThat(dto.getLng()).isCloseTo(25.92966, within(0.0001));
+            assertThat(dto.getBusNumber()).isEqualTo("4242");
+            assertThat(dto.getOnline()).isTrue();
+        }
+
+        @Test
+        @DisplayName("Відомий routeId=9 (автобус 3) — тип BUS")
+        void knownBusRoute_typeBus() throws Exception {
+            byte[] msg = buildProtobufWithVehicle(
+                    55, 9, 48_275_470L, 25_929_660L, "009(5555)");
+            invokeProcessMessage(collector, msg);
+
+            ArgumentCaptor<List<VehiclePositionDto>> captor =
+                    ArgumentCaptor.forClass(List.class);
+            verify(aggregationService).processPositions(captor.capture());
+
+            assertThat(captor.getValue().get(0).getType()).isEqualTo(TransportType.BUS);
+        }
+
+        @Test
+        @DisplayName("externalId = vehicleId як рядок")
+        void externalId_isVehicleId() throws Exception {
+            byte[] msg = buildProtobufWithVehicle(
+                    777, 1, 48_275_470L, 25_929_660L, "001(7777)");
+            invokeProcessMessage(collector, msg);
+
+            ArgumentCaptor<List<VehiclePositionDto>> captor =
+                    ArgumentCaptor.forClass(List.class);
+            verify(aggregationService).processPositions(captor.capture());
+
+            assertThat(captor.getValue().get(0).getExternalId()).isEqualTo("777");
+        }
+
+        @Test
+        @DisplayName("busNumber витягується з label формату 'XXX(NNNN)'")
+        void busNumber_extractedFromLabel() throws Exception {
+            byte[] msg = buildProtobufWithVehicle(
+                    10, 1, 48_275_470L, 25_929_660L, "075(6351)");
+            invokeProcessMessage(collector, msg);
+
+            ArgumentCaptor<List<VehiclePositionDto>> captor =
+                    ArgumentCaptor.forClass(List.class);
+            verify(aggregationService).processPositions(captor.capture());
+
+            assertThat(captor.getValue().get(0).getBusNumber()).isEqualTo("6351");
+        }
+
+        @Test
+        @DisplayName("Кілька vehicles в одному повідомленні — всі передаються")
+        void multipleVehicles_allAggregated() throws Exception {
+            // Два vehicles з routeId=1, різні vehicleId
+            byte[] v1 = buildVehicleBlock(10, 48_275_470L, 25_929_660L, "001(1001)");
+            byte[] v2 = buildVehicleBlock(20, 48_280_000L, 25_940_000L, "002(1002)");
+
+            byte[] routePositions = concat(
+                    field(1, lengthDelimited(v1)),
+                    field(1, lengthDelimited(v2))
+            );
+            byte[] routeEntry = concat(
+                    field(1, varint(1)), // routeId=1
+                    field(2, lengthDelimited(routePositions))
+            );
+            byte[] msg = concat(
+                    field(1, varint(System.currentTimeMillis() / 1000)),
+                    field(2, lengthDelimited(routeEntry))
+            );
+
+            invokeProcessMessage(collector, msg);
+
+            ArgumentCaptor<List<VehiclePositionDto>> captor =
+                    ArgumentCaptor.forClass(List.class);
+            verify(aggregationService).processPositions(captor.capture());
+            assertThat(captor.getValue()).hasSize(2);
+        }
+    }
+
+    // ── Reflection helpers ────────────────────────────────────────────────────
+
+    static byte[] invokeAesDecrypt(byte[] data) throws Exception {
         Method m = EasyWayCollector.class.getDeclaredMethod("aesDecrypt", byte[].class);
         m.setAccessible(true);
         try {
@@ -197,22 +317,27 @@ class EasyWayCollectorTest {
         }
     }
 
-    /** Викликає приватний метод extractBusNumber через reflection */
-    private static String invokeExtractBusNumber(String label) throws Exception {
+    static byte[] invokeTryDecrypt(byte[] data) throws Exception {
+        Method m = EasyWayCollector.class.getDeclaredMethod("tryDecrypt", byte[].class);
+        m.setAccessible(true);
+        return (byte[]) m.invoke(null, (Object) data);
+    }
+
+    static String invokeExtractBusNumber(String label) throws Exception {
         Method m = EasyWayCollector.class.getDeclaredMethod("extractBusNumber", String.class);
         m.setAccessible(true);
         return (String) m.invoke(null, label);
     }
 
-    /** Викликає приватний метод processMessage через reflection */
-    private static void invokeProcessMessage(Object collector, byte[] data) throws Exception {
+    static void invokeProcessMessage(Object collector, byte[] data) throws Exception {
         Method m = EasyWayCollector.class.getDeclaredMethod("processMessage", byte[].class);
         m.setAccessible(true);
         m.invoke(collector, (Object) data);
     }
 
-    /** AES-128-CBC шифрування для підготовки тестових даних */
-    private static byte[] aesEncrypt(byte[] data) throws Exception {
+    // ── AES encrypt (для підготовки тестових даних) ───────────────────────────
+
+    static byte[] aesEncrypt(byte[] data) throws Exception {
         SecretKeySpec keySpec = new SecretKeySpec(AES_KEY, "AES");
         IvParameterSpec ivSpec = new IvParameterSpec(AES_IV);
         Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
@@ -220,66 +345,41 @@ class EasyWayCollectorTest {
         return cipher.doFinal(data);
     }
 
-    /**
-     * Будує мінімальний protobuf з нульовими координатами
-     * для тестування фільтрації.
-     */
-    private static byte[] buildMinimalProtobuf(long lat, long lng) {
-        // field 1 (timestamp) = varint 0
-        return new byte[]{0x08, 0x00};
-    }
+    // ── Protobuf builder helpers ──────────────────────────────────────────────
 
     /**
-     * Будує повноцінний protobuf повідомлення EasyWay з одним vehicle.
-     *
-     * Структура:
-     *   Message {
-     *     field 1 (varint) = timestamp
-     *     field 2 (bytes)  = RouteEntry {
-     *       field 1 (varint) = routeId
-     *       field 2 (bytes)  = RoutePositions {
-     *         field 1 (bytes) = VehiclePosition {
-     *           field 6  (varint) = vehicleId
-     *           field 7  (string) = vehicleLabel
-     *           field 15 (varint) = lat * 1_000_000
-     *           field 16 (varint) = lng * 1_000_000
-     *         }
-     *       }
-     *     }
-     *   }
+     * Будує повне EasyWay protobuf повідомлення з одним vehicle.
      */
-    private static byte[] buildProtobufWithVehicle(
+    static byte[] buildProtobufWithVehicle(
             int vehicleId, int routeId, long lat, long lng, String label) {
 
-        // VehiclePosition
-        byte[] vehicleBytes = concat(
-                field(6, varint(vehicleId)),   // vehicleId
-                field(7, lengthDelimited(label.getBytes(StandardCharsets.UTF_8))), // label
-                field(8, varint(0)),           // angle
-                field(12, varint(0)),          // speed
-                field(15, varint(lat)),        // lat * 1_000_000
-                field(16, varint(lng))         // lng * 1_000_000
-        );
-
-        // RoutePositions { field 1 = VehiclePosition }
+        byte[] vehicleBytes = buildVehicleBlock(vehicleId, lat, lng, label);
         byte[] routePositions = field(1, lengthDelimited(vehicleBytes));
-
-        // RouteEntry { field 1 = routeId, field 2 = RoutePositions }
         byte[] routeEntry = concat(
                 field(1, varint(routeId)),
                 field(2, lengthDelimited(routePositions))
         );
-
-        // Message { field 1 = timestamp, field 2 = RouteEntry }
         return concat(
                 field(1, varint(System.currentTimeMillis() / 1000)),
                 field(2, lengthDelimited(routeEntry))
         );
     }
 
-    // ── Мінімальний protobuf builder ──────────────────────────────────────────
+    /**
+     * Будує блок VehiclePosition.
+     */
+    static byte[] buildVehicleBlock(int vehicleId, long lat, long lng, String label) {
+        return concat(
+                field(6,  varint(vehicleId)),
+                field(7,  lengthDelimited(label.getBytes(StandardCharsets.UTF_8))),
+                field(8,  varint(0)),   // angle
+                field(12, varint(0)),   // speed
+                field(15, varint(lat)),
+                field(16, varint(lng))
+        );
+    }
 
-    private static byte[] varint(long value) {
+    static byte[] varint(long value) {
         byte[] buf = new byte[10];
         int pos = 0;
         do {
@@ -293,25 +393,23 @@ class EasyWayCollectorTest {
         return result;
     }
 
-    private static byte[] lengthDelimited(byte[] data) {
-        byte[] lenBytes = varint(data.length);
-        byte[] result = new byte[lenBytes.length + data.length];
-        System.arraycopy(lenBytes, 0, result, 0, lenBytes.length);
-        System.arraycopy(data, 0, result, lenBytes.length, data.length);
+    static byte[] lengthDelimited(byte[] data) {
+        byte[] len = varint(data.length);
+        byte[] result = new byte[len.length + data.length];
+        System.arraycopy(len, 0, result, 0, len.length);
+        System.arraycopy(data, 0, result, len.length, data.length);
         return result;
     }
 
-    /** wireType=0: varint */
-    private static byte[] field(int fieldNum, long value) {
+    static byte[] field(int fieldNum, long value) {
         return field(fieldNum, varint(value), 0);
     }
 
-    /** wireType=2: length-delimited */
-    private static byte[] field(int fieldNum, byte[] lengthDelimitedValue) {
-        return field(fieldNum, lengthDelimitedValue, 2);
+    static byte[] field(int fieldNum, byte[] value) {
+        return field(fieldNum, value, 2);
     }
 
-    private static byte[] field(int fieldNum, byte[] value, int wireType) {
+    static byte[] field(int fieldNum, byte[] value, int wireType) {
         byte[] tag = varint((long) fieldNum << 3 | wireType);
         byte[] result = new byte[tag.length + value.length];
         System.arraycopy(tag, 0, result, 0, tag.length);
@@ -319,7 +417,7 @@ class EasyWayCollectorTest {
         return result;
     }
 
-    private static byte[] concat(byte[]... arrays) {
+    static byte[] concat(byte[]... arrays) {
         int total = 0;
         for (byte[] a : arrays) total += a.length;
         byte[] result = new byte[total];
